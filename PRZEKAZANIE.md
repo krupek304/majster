@@ -13,15 +13,19 @@ Działający MVP: aplikacja PWA do budowania kosztorysu prac remontowych
 całkowita, eksport CSV, wydruk/PDF przez przeglądarkę). Zero backendu,
 zero kosztów, wszystko lokalnie w IndexedDB na urządzeniu.
 
-**Wdrożona i działająca pod adresem: https://krupek304.github.io/majster/**
-(GitHub Pages, repozytorium publiczne `krupek304/majster`, branch `main`,
-HTTPS wymuszony przez GitHub). To jest adres do otwarcia na iPhonie i
-dodania do ekranu głównego (Safari → Udostępnij → Dodaj do ekranu głównego).
+**Wdrożona i działająca pod adresem: https://krupek304.github.io/o-majster/**
+(GitHub Pages, repozytorium publiczne `krupek304/o-majster` — przemianowane
+2026-09-26 z `majster` na życzenie użytkownika, branch `main`, HTTPS
+wymuszony przez GitHub). To jest adres do otwarcia na iPhonie i dodania do
+ekranu głównego (Safari → Udostępnij → Dodaj do ekranu głównego).
 
-**W trakcie zmiany na `https://krupek304.github.io/o-majster/`** — użytkownik
-poprosił też o zmianę adresu, nie tylko nazwy wyświetlanej. Wymaga
-przemianowania repozytorium na GitHubie (czynność tylko dla użytkownika,
-opisana w kroku poniżej) — do potwierdzenia w dalszej części tej sesji.
+**Stary adres `https://krupek304.github.io/majster/` już NIE działa** —
+sprawdzone bezpośrednio: zwraca 404 "Site not found", GitHub Pages nie
+przekierowuje automatycznie starych ścieżek po rename repozytorium (inaczej
+niż `git clone`/`git push` na stary URL, które nadal działają dzięki
+przekierowaniu na poziomie samego repo — to dotyczy tylko operacji git,
+nie stron Pages). Każdy, kto miał stary link zapisany (w tym ikona na
+ekranie głównym telefonu), musi przejść na nowy adres i dodać go od nowa.
 
 ## Model danych (patrz MAPA.md → js/db.js)
 
@@ -391,6 +395,10 @@ Zweryfikowane liczbami, po kolei:
 
 ## Co zostaje otwarte
 
+- **Dodać nowy adres do ekranu głównego** (`https://krupek304.github.io/o-majster/`)
+  — stary link/ikona wskazujący na `.../majster/` przestał działać (404),
+  nie ma automatycznego przekierowania. Dotyczy każdego, kto miał stary
+  link, w tym kolegi-fachowca, jeśli już go dostał.
 - Realny test na iPhone (najlepiej od razu na telefonie kolegi-fachowca,
   bo to on będzie docelowym użytkownikiem): dodanie do ekranu głównego,
   sprawdzenie ikony, trybu pełnoekranowego, wygody wpisywania na dotyk,
