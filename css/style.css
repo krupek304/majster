@@ -138,8 +138,10 @@ body {
   padding: 10px 0;
   border-bottom: 1px solid var(--linia);
   gap: 8px;
+  cursor: pointer;
 }
 .pozycja:last-child { border-bottom: none; }
+.pozycja:active { background: #f9fafb; }
 .pozycja .nazwa { font-weight: 500; }
 .pozycja .szczegoly { font-size: 12px; color: var(--tekst-slaby); }
 .pozycja .kwota { font-weight: 600; white-space: nowrap; }

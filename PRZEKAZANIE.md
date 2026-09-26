@@ -16,23 +16,34 @@ dodania do ekranu głównego (Safari → Udostępnij → Dodaj do ekranu główn
 
 - **Projekt** = jedno zlecenie/mieszkanie, ma własną listę pozycji.
 - **Pozycja kosztorysu** = nazwa + kategoria + ilość + jednostka + stawka
-  → kwota = ilość × stawka (nigdy nie zgadywana, zawsze wpisana ręcznie).
-- **Cennik** = zapisane pary nazwa+kategoria+jednostka+stawka, do szybkiego
-  wyboru przy dodawaniu pozycji (auto-wypełnia formularz, można nadpisać).
+  → kwota = ilość × stawka. Edytowalna po zapisaniu (stuknięcie wiersza).
+- **Cennik = domyślne stawki** (jeden system, nie dwa równoległe — decyzja
+  z 2026-09-26). 60 gotowych pozycji, każda z jednostką i **sugerowaną
+  stawką rynkową** znalezioną w internecie (patrz sekcja niżej), plus
+  dowolna liczba własnych. Wybór z cennika przy dodawaniu pozycji
+  auto-wypełnia nazwę+kategorię+jednostkę+stawkę — wszystko wciąż
+  edytowalne przed zapisem. Cennik sam w sobie też jest edytowalny
+  (ekran "Cennik", stuknięcie wiersza) — to jest "opcja ustawienia
+  stawek domyślnych", o którą prosił użytkownik.
 - **Kategorie** = 14 domyślnych, w pełnej kolejności etapów wykończenia
   mieszkania (od "Przygotowanie i planowanie" po "Prace dodatkowe i
   opcjonalne"), edytowalne. Lista podana przez użytkownika 2026-09-26.
-- **Podkategorie** = 60 typowych czynności (po ok. 3-6 na kategorię),
-  osobny store `podkategorie`, tylko nazwa + kategoria — **bez jednostek
-  i stawek**, bo tego nikt nie podał, a zgadywanie cen jest zabronione
-  zasadami projektu. W formularzu dodawania pozycji/cennika wybór
-  podkategorii tylko auto-wypełnia kategorię i nazwę; jednostkę i stawkę
-  fachowiec zawsze wpisuje sam.
 - Pole `dodane_przez` w każdej pozycji = ID użytkownika (dziś zawsze `"ja"`,
   jeden zaszyty rekord w store `uzytkownicy`). To jest **jedyny** element
   pod przyszłe konta — zgodnie z ustaleniem, że teraz jest jeden użytkownik,
   ale architektura ma nie blokować dodania kolejnych kont później. Żadnego
   logowania/UI multi-user nie zbudowano teraz celowo (nie było potrzebne).
+
+### Historia: podkategorie → scalone z cennikiem (2026-09-26)
+
+Pierwsza wersja tej funkcji (patrz commit `a555538`) dodała osobny store
+`podkategorie` (nazwa+kategoria, bez jednostki/stawki) jako "podpowiedzi".
+Po teście użytkownik zauważył, że np. malowanie i tak pokazywało jednostkę
+"szt." zamiast "m2" — bo podkategoria nie niosła jednostki. Rozwiązanie:
+**połączyć podkategorie z cennikiem** w jeden system (decyzja użytkownika,
+zaproponowana przeze mnie jako prostsza) — każda z 60 typowych czynności
+jest teraz od razu gotową pozycją cennika z poprawną jednostką i sugerowaną
+stawką. Store `podkategorie` usunięty w migracji do wersji bazy 3.
 
 ## Decyzje z researchu (patrz doc "Majster — Research rynku")
 
@@ -42,6 +53,59 @@ dodania do ekranu głównego (Safari → Udostępnij → Dodaj do ekranu główn
 - Struktura pozycji: **ilość × stawka za jednostkę** (nie ryczałt).
 - Wiele niezależnych projektów/kosztorysów — nie jeden na raz.
 - Własny edytowalny cennik stawek.
+
+## Sugerowane stawki rynkowe (2026-09-26) — źródła i metodologia
+
+Na prośbę użytkownika: "Sprawdź w internecie o średnich stawkach za dane
+czynności i wpisz sugerowaną stawkę rynkową." Zrobione przez ~20 wyszukiwań
+web dla poszczególnych grup prac (nie z pamięci modelu — zgodnie z zasadą
+"zmierz, nie zgaduj"). Metodologia:
+
+- **Sama robocizna, bez materiału** (materiał dokłada się osobno, różne ceny
+  regionalnie i zależnie od dostawcy — nie da się sensownie uśrednić).
+- **Średnia krajowa**, nie stawki dla Warszawy/Krakowa (te bywają o 20-50%
+  wyższe — regionalna zmienność jest realna i stawka i tak jest edytowalna).
+- Gdy źródła podawały przedział (np. "35-55 zł/m²") — wzięta wartość
+  środkowa, zaokrąglona do pełnych/połówkowych złotych.
+- Źródła: muratordom.pl, kb.pl, cenauslug.pl, budowalka.pl, adrem.org.pl,
+  ogarnijremont.pl, cennikibudowlane.com.pl i kilkanaście innych — pełne
+  cytaty i zakresy widoczne w historii tej sesji, nie duplikowane tu w
+  całości, żeby nie rozdymać pliku.
+
+Przykładowe stawki (robocizna, zł, pełna lista 60 pozycji w `js/db.js` →
+`DOMYSLNY_CENNIK`):
+
+| Czynność | Jednostka | Stawka | Zakres w źródłach |
+| --- | --- | --- | --- |
+| Malowanie końcowe ścian (2-3 warstwy) | m² | 22 zł | 17-50 zł/m² |
+| Gładź gipsowa | m² | 50 zł | 45-62 zł/m² |
+| Tynkowanie (gipsowe) | m² | 44 zł | 43-45 zł/m² |
+| Płytki ścienne | m² | 100 zł | 70-120 zł/m² |
+| Płytki podłogowe (gres) | m² | 110 zł | 90-190 zł/m² (format-zależne) |
+| Panele podłogowe | m² | 44 zł | 35-55 zł/m² |
+| Wylewka samopoziomująca | m² | 40 zł | 27-55 zł/m² |
+| Ścianka działowa GK | m² | 100 zł | 65-160 zł/m² |
+| Sufit podwieszany GK | m² | 120 zł | 90-180 zł/m² |
+| Punkt elektryczny | pkt | 130 zł | 90-190 zł/pkt |
+| Punkt hydrauliczny | pkt | 300 zł | 150-450 zł/pkt |
+| Montaż drzwi wewnętrznych | szt. | 350 zł | 300-600 zł/komplet |
+| Montaż WC/umywalki | szt. | 250 zł | 200-400 zł/szt. |
+| Wywóz gruzu | kpl. | 700 zł | kontener 640-2600 zł (wg m³) |
+| Montaż klimatyzacji (split) | kpl. | 1500 zł | 1200-2500 zł |
+
+11/60 pozycji ma `stawka: 0` ("stawka nieustalona" w UI) — czynności
+organizacyjne/zbyt zróżnicowane (opracowanie projektu, harmonogram, zakup
+materiałów, zabezpieczenie mieszkania, demontaż ogólny, wentylacja/rekuperacja,
+wymiana okien, usunięcie zabezpieczeń, odbiór techniczny, dekory ścienne,
+smart home) — zgodnie z decyzją użytkownika, żeby nie zmyślać ceny tam,
+gdzie realnie nie ma jednej sensownej stawki za jednostkę.
+
+**Ważne zastrzeżenie do przekazania dalej:** to są stawki orientacyjne z
+połowy 2026, głównie robocizna, bez regionalnego różnicowania — realne ceny
+konkretnego fachowca mogą się różnić o dziesiątki procent w dowolną stronę.
+Cały sens tego, że są w edytowalnym cenniku, a nie zaszyte na twardo w
+kodzie: użytkownik/kolega ma je zweryfikować i dopasować do swoich
+prawdziwych stawek przy pierwszym użyciu.
 
 ## Co zmienione i wdrożone
 
@@ -124,6 +188,41 @@ prawdziwe HTTPS, nie lokalny serwer): manifest wczytuje się poprawnie
 4 szt. × 100 zł → **po: 400,00 zł** (zgodne). Dane testowe usunięte
 po teście.
 
+### Runda 2 (2026-09-26, wieczór): scalenie cennika z podkategoriami + stawki
+
+Przed: 60 podkategorii bez jednostek/stawek (store `podkategorie`), cennik
+pusty poza tym co user/ja dodaliśmy ręcznie. Po: 60 gotowych pozycji cennika
+z jednostką i stawką, store `podkategorie` usunięty (baza v3).
+
+- Świeża baza: `pobierzCennik()` → **60 pozycji, 14 kategorii, 49 ze stawką
+  >0, 11 ze stawką 0**, jednostki: `usł., m2, mb, szt., pkt, kpl.` — dokładnie
+  6 różnych, żadnej "wszystko szt." (pierwotny błąd zgłoszony przez usera).
+- Przykład dokładnie z jego zgłoszenia: "Malowanie końcowe ścian..." →
+  jednostka **m2**, stawka **22 zł** (nie "szt." jak wcześniej).
+- Formularz "Dodaj pozycję": wybór z grupowanego cennika (14 grup w
+  dropdownie) → autofill jednostki `m2` i stawki `22` → ilość 30 →
+  **podgląd 660,00 zł**, po zapisie kwota na liście też **660,00 zł**.
+- **Edycja zapisanej pozycji** (nowa funkcja): kliknięcie wiersza otworzyło
+  dialog "Edytuj pozycję" z polami wypełnionymi (30, 22 — zgodne z tym co
+  zapisano), zmiana ilości na 40 → **przed: 660,00 zł / po: 880,00 zł**
+  (40×22, ta sama pozycja, nie duplikat — na liście nadal jedna pozycja).
+- **Edycja pozycji cennika** (nowa funkcja, ekran "domyślne stawki"):
+  kliknięcie wiersza "Malowanie końcowe..." → dialog "Edytuj stawkę" ze
+  stawką `22` → zmiana na `25` → wiersz na liście pokazuje **25,00 zł/m2**
+  (stawka domyślna zaktualizowana trwale, nie tylko dla jednej pozycji).
+- Pozycja ze stawką 0 (np. "Opracowanie projektu wnętrza"): w kosztorysie
+  pokazuje **"stawka nieustalona"** zamiast "0,00 zł" i kwotę **"—"**
+  zamiast "0,00 zł" — nie wygląda jak realna darmowa usługa.
+- **Migracja ze starszej bazy zweryfikowana ponownie** (nauczka z pierwszej
+  rundy): symulacja bazy w wersji 2 (14 kategorii już poprawnych, 1 stary
+  rekord w `podkategorie`, pusty `cennik`) → po otwarciu nowym kodem:
+  baza podniesiona do **wersji 3**, store `podkategorie` **usunięty**
+  (`db.objectStoreNames` to potwierdza), kategorie nadal **14** (bez
+  duplikatów — nazwy się zgadzały), cennik uzupełniony do **60 pozycji**.
+  Zero błędów przy usuwaniu store'u w `onupgradeneeded`.
+- Po wdrożeniu (commit z tej rundy, cache `majster-v4`) wyczyściłem własne
+  dane testowe na produkcji tak jak poprzednio.
+
 ## Czego NIE udało się sprawdzić
 
 - **Rzeczywiste działanie na fizycznym iPhone** — testowałem w Browser
@@ -145,16 +244,19 @@ po teście.
   jeszcze zrobione (czekam, aż wersja będzie stabilna po realnym teście
   na iPhone kolegi użytkownika — patrz pamięć: docelowy użytkownik appki
   to fachowiec-kolega, nie sam deweloper).
+- **Sugerowane stawki rynkowe nie są zweryfikowane z realnymi cenami
+  kolegi-fachowca** — to są uśrednione wartości ze źródeł internetowych
+  (patrz sekcja wyżej), nie ceny sprawdzone "w terenie". Kolega powinien
+  przejrzeć cennik przy pierwszym użyciu i poprawić stawki na swoje.
 
 ## Co zostaje otwarte
 
 - Realny test na iPhone (najlepiej od razu na telefonie kolegi-fachowca,
   bo to on będzie docelowym użytkownikiem): dodanie do ekranu głównego,
-  sprawdzenie ikony, trybu pełnoekranowego, wygody wpisywania na dotyk.
-- Edycja istniejącej pozycji kosztorysu / cennika (na razie jest tylko
-  dodawanie i usuwanie — funkcje `aktualizujPozycjeKosztorysu` i
-  `aktualizujPozycjeCennika` w `db.js` już istnieją, ale UI do edycji
-  nie jest podpięte — świadomie pominięte na MVP, żeby nie rozdymać
-  pierwszej wersji).
+  sprawdzenie ikony, trybu pełnoekranowego, wygody wpisywania na dotyk,
+  wygody wybierania z cennika przy 60 pozycjach na małym ekranie.
+- Kolega powinien przejrzeć 60 sugerowanych stawek w ekranie "Cennik" i
+  skorygować je na swoje realne ceny (i uzupełnić 11 pozycji, które mają
+  "stawkę nieustaloną").
 - Rozważyć OCR paragonów / zdjęcie jako załącznik do pozycji — odłożone
   jako "nice-to-have" zgodnie z rekomendacją z researchu.

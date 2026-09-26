@@ -1,6 +1,6 @@
 import {
   pobierzProjekty, dodajProjekt, usunProjekt,
-  pobierzKategorie, dodajKategorie, pobierzPodkategorie,
+  pobierzKategorie, dodajKategorie,
   pobierzCennik, dodajPozycjeCennika, aktualizujPozycjeCennika, usunPozycjeCennika,
   pobierzPozycjeProjektu, dodajPozycjeKosztorysu, aktualizujPozycjeKosztorysu, usunPozycjeKosztorysu,
 } from './db.js';
@@ -120,12 +120,12 @@ async function renderKosztorys(projektId) {
     : grupy.map(({ kategoria, pozycje: poz, suma: sumaKat }) => `
       <div class="kategoria-naglowek"><span>${esc(kategoria)}</span><span>${formatujKwote(sumaKat)}</span></div>
       ${poz.map((p) => `
-        <div class="pozycja" data-id="${p.id}">
+        <div class="pozycja" data-edytuj="${p.id}">
           <div>
             <div class="nazwa">${esc(p.nazwa)}</div>
-            <div class="szczegoly">${p.ilosc} ${esc(p.jednostka)} &times; ${formatujKwote(p.stawka)}</div>
+            <div class="szczegoly">${p.ilosc} ${esc(p.jednostka)} &times; ${formatujStawke(p.stawka, p.jednostka)}</div>
           </div>
-          <div class="kwota">${formatujKwote(kwotaPozycji(p.ilosc, p.stawka))}</div>
+          <div class="kwota">${p.stawka ? formatujKwote(kwotaPozycji(p.ilosc, p.stawka)) : '—'}</div>
           <button class="btn-usun" data-usun="${p.id}" aria-label="Usuń" title="Usuń">🗑</button>
         </div>
       `).join('')}
@@ -146,13 +146,19 @@ async function renderKosztorys(projektId) {
     </div>
   `;
 
-  document.getElementById('btn-dodaj-pozycje').addEventListener('click', () => dialogNowaPozycja(projektId));
+  document.getElementById('btn-dodaj-pozycje').addEventListener('click', () => dialogPozycja(projektId));
   document.getElementById('btn-drukuj').addEventListener('click', () => window.print());
   document.getElementById('btn-csv').addEventListener('click', () => eksportujCSV(projekt, pozycje));
   document.getElementById('btn-usun-projekt').addEventListener('click', async () => {
     if (!confirm(`Usunąć projekt "${projekt.nazwa}" wraz ze wszystkimi pozycjami?`)) return;
     await usunProjekt(projektId);
     ustawWidok('projekty');
+  });
+  app.querySelectorAll('[data-edytuj]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const pozycja = pozycje.find((p) => p.id === el.dataset.edytuj);
+      dialogPozycja(projektId, pozycja);
+    });
   });
   app.querySelectorAll('[data-usun]').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
@@ -161,6 +167,11 @@ async function renderKosztorys(projektId) {
       renderKosztorys(projektId);
     });
   });
+}
+
+function formatujStawke(stawka, jednostka) {
+  if (!stawka) return 'stawka nieustalona';
+  return `${formatujKwote(stawka)}/${jednostka}`;
 }
 
 function grupujPoKategorii(pozycje) {
@@ -172,42 +183,39 @@ function grupujPoKategorii(pozycje) {
   }));
 }
 
-async function dialogNowaPozycja(projektId) {
-  const [kategorie, cennik, podkategorie] = await Promise.all([pobierzKategorie(), pobierzCennik(), pobierzPodkategorie()]);
+async function dialogPozycja(projektId, edytowanaPozycja = null) {
+  const [kategorie, cennik] = await Promise.all([pobierzKategorie(), pobierzCennik()]);
+  const edycja = !!edytowanaPozycja;
 
   otworzDialog(`
-    <h2>Nowa pozycja</h2>
+    <h2>${edycja ? 'Edytuj pozycję' : 'Nowa pozycja'}</h2>
     ${cennik.length > 0 ? `
       <div class="pole">
         <label for="pole-z-cennika">Z cennika (opcjonalnie)</label>
-        <select id="pole-z-cennika">
-          <option value="">— wpisz ręcznie —</option>
-          ${cennik.map((c) => `<option value="${c.id}">${esc(c.nazwa)} (${formatujKwote(c.stawka)}/${esc(c.jednostka)})</option>`).join('')}
-        </select>
+        ${htmlSelectCennik('pole-z-cennika', kategorie, cennik)}
       </div>
     ` : ''}
-    ${htmlSelectPodkategorie('pole-podkategoria', kategorie, podkategorie)}
     <div class="pole">
       <label for="pole-nazwa">Nazwa czynności</label>
-      <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" />
+      <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" value="${esc(edytowanaPozycja?.nazwa)}" />
     </div>
     <div class="pole">
       <label for="pole-kategoria">Kategoria</label>
       <select id="pole-kategoria">
-        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}">${esc(k.nazwa)}</option>`).join('')}
+        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${edytowanaPozycja?.kategoria === k.nazwa ? 'selected' : ''}>${esc(k.nazwa)}</option>`).join('')}
       </select>
     </div>
     <div class="pole">
       <label for="pole-ilosc">Ilość</label>
-      <input id="pole-ilosc" type="number" step="0.01" min="0" value="1" />
+      <input id="pole-ilosc" type="number" step="0.01" min="0" value="${edytowanaPozycja?.ilosc ?? 1}" />
     </div>
     <div class="pole">
       <label for="pole-jednostka">Jednostka</label>
-      <input id="pole-jednostka" type="text" placeholder="m2, mb, szt., kpl." value="szt." />
+      <input id="pole-jednostka" type="text" placeholder="m2, mb, szt., kpl." value="${esc(edytowanaPozycja?.jednostka ?? 'szt.')}" />
     </div>
     <div class="pole">
       <label for="pole-stawka">Stawka za jednostkę (zł)</label>
-      <input id="pole-stawka" type="number" step="0.01" min="0" value="0" />
+      <input id="pole-stawka" type="number" step="0.01" min="0" value="${edytowanaPozycja?.stawka ?? 0}" />
     </div>
     <div class="pole">
       <label>Kwota</label>
@@ -215,7 +223,7 @@ async function dialogNowaPozycja(projektId) {
     </div>
     <div class="dialog-akcje">
       <button class="btn wtorny" id="btn-anuluj">Anuluj</button>
-      <button class="btn" id="btn-zapisz">Dodaj</button>
+      <button class="btn" id="btn-zapisz">${edycja ? 'Zapisz zmiany' : 'Dodaj'}</button>
     </div>
   `);
 
@@ -226,11 +234,11 @@ async function dialogNowaPozycja(projektId) {
   const poleStawka = document.getElementById('pole-stawka');
   const podgladKwoty = document.getElementById('podglad-kwoty');
   const poleZCennika = document.getElementById('pole-z-cennika');
-  const polePodkategoria = document.getElementById('pole-podkategoria');
 
   function przeliczPodglad() {
     podgladKwoty.textContent = formatujKwote(kwotaPozycji(poleIlosc.value, poleStawka.value));
   }
+  przeliczPodglad();
   [poleIlosc, poleStawka].forEach((el) => el.addEventListener('input', przeliczPodglad));
 
   if (poleZCennika) {
@@ -245,27 +253,45 @@ async function dialogNowaPozycja(projektId) {
     });
   }
 
-  polePodkategoria.addEventListener('change', () => {
-    const wybrana = podkategorie.find((p) => p.id === polePodkategoria.value);
-    if (!wybrana) return;
-    poleNazwa.value = wybrana.nazwa;
-    poleKategoria.value = wybrana.kategoria;
-  });
-
   document.getElementById('btn-anuluj').addEventListener('click', zamknijDialog);
   document.getElementById('btn-zapisz').addEventListener('click', async () => {
     const nazwa = poleNazwa.value.trim();
     if (!nazwa) return;
-    await dodajPozycjeKosztorysu(projektId, {
+    const dane = {
       nazwa,
       kategoria: poleKategoria.value,
       jednostka: poleJednostka.value || 'szt.',
       ilosc: poleIlosc.value,
       stawka: poleStawka.value,
-    });
+    };
+    if (edycja) {
+      await aktualizujPozycjeKosztorysu({ ...edytowanaPozycja, ...dane, ilosc: Number(dane.ilosc), stawka: Number(dane.stawka) });
+    } else {
+      await dodajPozycjeKosztorysu(projektId, dane);
+    }
     zamknijDialog();
     renderKosztorys(projektId);
   });
+}
+
+// Grupowany <select> z cennika, wg kolejności kategorii (etapy remontu),
+// żeby przy 60+ pozycjach dało się szybko odnaleźć właściwą czynność.
+function htmlSelectCennik(id, kategorie, cennik) {
+  const optgroups = kategorie.map((k) => {
+    const lista = cennik.filter((c) => c.kategoria === k.nazwa);
+    if (lista.length === 0) return '';
+    return `
+      <optgroup label="${esc(k.nazwa)}">
+        ${lista.map((c) => `<option value="${c.id}">${esc(c.nazwa)} (${c.stawka ? formatujKwote(c.stawka) + '/' + esc(c.jednostka) : 'stawka do ustalenia'})</option>`).join('')}
+      </optgroup>
+    `;
+  }).join('');
+  return `
+    <select id="${id}">
+      <option value="">— wpisz ręcznie —</option>
+      ${optgroups}
+    </select>
+  `;
 }
 
 function eksportujCSV(projekt, pozycje) {
@@ -300,100 +326,85 @@ async function renderCennik() {
   const listaHtml = cennik.length === 0
     ? '<div class="pusty-stan">Cennik jest pusty.<br>Dodaj typowe czynności ze stawkami, żeby szybciej budować kosztorysy.</div>'
     : cennik.map((c) => `
-      <div class="pozycja" data-id="${c.id}">
+      <div class="pozycja" data-edytuj="${c.id}">
         <div>
           <div class="nazwa">${esc(c.nazwa)}</div>
-          <div class="szczegoly">${esc(c.kategoria)} &middot; ${formatujKwote(c.stawka)} / ${esc(c.jednostka)}</div>
+          <div class="szczegoly">${esc(c.kategoria)} &middot; ${formatujStawke(c.stawka, c.jednostka)}</div>
         </div>
         <button class="btn-usun" data-usun="${c.id}" aria-label="Usuń" title="Usuń">🗑</button>
       </div>
     `).join('');
 
   app.innerHTML = `
+    <div class="uwaga">To Twoje domyślne stawki — wybierasz je przy dodawaniu pozycji do kosztorysu. Stuknij pozycję, żeby zmienić jej stawkę na stałe.</div>
     <div class="karta">${listaHtml}</div>
     <button class="btn" id="btn-nowa-pozycja-cennika">+ Dodaj czynność do cennika</button>
   `;
 
-  document.getElementById('btn-nowa-pozycja-cennika').addEventListener('click', dialogNowaPozycjaCennika);
+  document.getElementById('btn-nowa-pozycja-cennika').addEventListener('click', () => dialogPozycjaCennika());
+  app.querySelectorAll('[data-edytuj]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const pozycja = cennik.find((c) => c.id === el.dataset.edytuj);
+      dialogPozycjaCennika(pozycja);
+    });
+  });
   app.querySelectorAll('[data-usun]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       await usunPozycjeCennika(btn.dataset.usun);
       renderCennik();
     });
   });
 }
 
-async function dialogNowaPozycjaCennika() {
-  const [kategorie, podkategorie] = await Promise.all([pobierzKategorie(), pobierzPodkategorie()]);
+async function dialogPozycjaCennika(edytowanaPozycja = null) {
+  const kategorie = await pobierzKategorie();
+  const edycja = !!edytowanaPozycja;
   otworzDialog(`
-    <h2>Nowa czynność w cenniku</h2>
-    ${htmlSelectPodkategorie('pole-podkategoria', kategorie, podkategorie)}
+    <h2>${edycja ? 'Edytuj stawkę' : 'Nowa czynność w cenniku'}</h2>
     <div class="pole">
       <label for="pole-nazwa">Nazwa czynności</label>
-      <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" />
+      <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" value="${esc(edytowanaPozycja?.nazwa)}" />
     </div>
     <div class="pole">
       <label for="pole-kategoria">Kategoria</label>
       <select id="pole-kategoria">
-        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}">${esc(k.nazwa)}</option>`).join('')}
+        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${edytowanaPozycja?.kategoria === k.nazwa ? 'selected' : ''}>${esc(k.nazwa)}</option>`).join('')}
       </select>
     </div>
     <div class="pole">
       <label for="pole-jednostka">Jednostka</label>
-      <input id="pole-jednostka" type="text" placeholder="m2, mb, szt., kpl." value="m2" />
+      <input id="pole-jednostka" type="text" placeholder="m2, mb, szt., kpl." value="${esc(edytowanaPozycja?.jednostka ?? 'm2')}" />
     </div>
     <div class="pole">
       <label for="pole-stawka">Stawka (zł za jednostkę)</label>
-      <input id="pole-stawka" type="number" step="0.01" min="0" value="0" />
+      <input id="pole-stawka" type="number" step="0.01" min="0" value="${edytowanaPozycja?.stawka ?? 0}" />
     </div>
     <div class="dialog-akcje">
       <button class="btn wtorny" id="btn-anuluj">Anuluj</button>
-      <button class="btn" id="btn-zapisz">Zapisz</button>
+      <button class="btn" id="btn-zapisz">${edycja ? 'Zapisz zmiany' : 'Zapisz'}</button>
     </div>
   `);
   const poleNazwa = document.getElementById('pole-nazwa');
   const poleKategoria = document.getElementById('pole-kategoria');
-  document.getElementById('pole-podkategoria').addEventListener('change', (e) => {
-    const wybrana = podkategorie.find((p) => p.id === e.target.value);
-    if (!wybrana) return;
-    poleNazwa.value = wybrana.nazwa;
-    poleKategoria.value = wybrana.kategoria;
-  });
   document.getElementById('btn-anuluj').addEventListener('click', zamknijDialog);
   document.getElementById('btn-zapisz').addEventListener('click', async () => {
     const nazwa = poleNazwa.value.trim();
     if (!nazwa) return;
-    await dodajPozycjeCennika({
+    const dane = {
       nazwa,
       kategoria: poleKategoria.value,
       jednostka: document.getElementById('pole-jednostka').value || 'szt.',
       stawka: document.getElementById('pole-stawka').value,
-    });
+    };
+    if (edycja) {
+      await aktualizujPozycjeCennika({ ...edytowanaPozycja, ...dane, stawka: Number(dane.stawka) });
+    } else {
+      await dodajPozycjeCennika(dane);
+    }
     zamknijDialog();
     renderCennik();
   });
-}
-
-function htmlSelectPodkategorie(id, kategorie, podkategorie) {
-  // Grupy w kolejności kategorii (etapy remontu po kolei), nie w kolejności ID.
-  const optgroups = kategorie.map((k) => {
-    const lista = podkategorie.filter((p) => p.kategoria === k.nazwa);
-    if (lista.length === 0) return '';
-    return `
-      <optgroup label="${esc(k.nazwa)}">
-        ${lista.map((p) => `<option value="${p.id}">${esc(p.nazwa)}</option>`).join('')}
-      </optgroup>
-    `;
-  }).join('');
-  return `
-    <div class="pole">
-      <label for="${id}">Typowa czynność (opcjonalnie)</label>
-      <select id="${id}">
-        <option value="">— wybierz albo wpisz własną nazwę niżej —</option>
-        ${optgroups}
-      </select>
-    </div>
-  `;
 }
 
 // ---------- Dialog (generyczny) ----------

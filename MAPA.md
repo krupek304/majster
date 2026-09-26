@@ -10,38 +10,42 @@ Spis funkcji z numerami linii. Odświeżać po większych zmianach.
 - `formatujKwote(kwota)` — [calc.js:31](js/calc.js#L31) — formatowanie na "1 234,56 zł"
 - Testy: [calc.test.mjs](js/calc.test.mjs) — `node js/calc.test.mjs`
 
-## js/db.js — warstwa danych, IndexedDB (`majster-db`, wersja 2)
+## js/db.js — warstwa danych, IndexedDB (`majster-db`, wersja 3)
 
-Store'y: `projekty`, `cennik`, `pozycje` (indeks `projekt_id`), `kategorie`,
-`podkategorie` (indeks `kategoria`, nazwa string), `uzytkownicy`.
+Store'y: `projekty`, `cennik`, `pozycje` (indeks `projekt_id`), `kategorie`, `uzytkownicy`.
+(`podkategorie` z wersji 2 zostało usunięte w v3 — połączone z `cennik`, patrz niżej.)
 Pole `dodane_przez` w pozycji kosztorysu = zapas pod przyszłe konta (patrz PRZEKAZANIE.md).
 
-`DOMYSLNE_KATEGORIE_Z_PODKATEGORIAMI` — 14 kategorii (pełna kolejność etapów
-wykończenia mieszkania, od przygotowania po odbiór) × 60 podkategorii razem —
-źródło danych do seedowania `kategorie` i `podkategorie` przy pierwszym
-uruchomieniu. Bez jednostek/stawek — te wpisuje zawsze fachowiec ręcznie.
+`DOMYSLNY_CENNIK` — 60 gotowych pozycji cennika (14 kategorii = pełna kolejność
+etapów wykończenia mieszkania), każda z jednostką i **sugerowaną stawką rynkową**
+(Polska, średnia krajowa, sama robocizna — źródła i zakresy w PRZEKAZANIE.md).
+49/60 ma stawkę >0, 11/60 (czynności organizacyjne: projekt, harmonogram, zakup
+materiałów, zabezpieczenie, demontaż ogólny, wentylacja, wymiana okien, sprzątanie
+zabezpieczeń, odbiór techniczny, dekory, smart home) ma `stawka: 0` — zbyt
+zróżnicowane, żeby mieć jedną sensowną cenę, do wypełnienia przez fachowca.
 
-- `openDB()` — [db.js:26](js/db.js#L26) — otwiera/tworzy bazę, seeduje kategorie, podkategorie i domyślnego użytkownika
-- `cryptoId()` — [db.js:80](js/db.js#L80)
-- Projekty: `pobierzProjekty` [108](js/db.js#L108), `dodajProjekt` [114](js/db.js#L114), `usunProjekt` [126](js/db.js#L126) (kasuje też jego pozycje)
-- Kategorie: `pobierzKategorie` [137](js/db.js#L137), `dodajKategorie` [143](js/db.js#L143)
-- Podkategorie: `pobierzPodkategorie()` — typowe czynności per kategoria, do podpowiedzi w formularzach (bez cen)
-- Cennik: `pobierzCennik` [153](js/db.js#L153), `dodajPozycjeCennika` [159](js/db.js#L159), `aktualizujPozycjeCennika` [172](js/db.js#L172), `usunPozycjeCennika` [177](js/db.js#L177)
-- Pozycje kosztorysu: `pobierzPozycjeProjektu` [184](js/db.js#L184), `dodajPozycjeKosztorysu` [190](js/db.js#L190), `aktualizujPozycjeKosztorysu` [207](js/db.js#L207), `usunPozycjeKosztorysu` [212](js/db.js#L212)
+- `openDB()` — [db.js:96](js/db.js#L96) — otwiera/tworzy bazę; przy uaktualnieniu do v3 kasuje store `podkategorie`
+- `zapewnijDaneStartowe(db)` — [db.js:137](js/db.js#L137) — dopisuje brakujące domyślne kategorie (po nazwie) i pozycje cennika (po parze kategoria+nazwa) — addytywnie, nigdy nie nadpisuje ani nie duplikuje
+- `cryptoId()` — [db.js:179](js/db.js#L179)
+- Projekty: `pobierzProjekty` [207](js/db.js#L207), `dodajProjekt` [213](js/db.js#L213), `usunProjekt` [225](js/db.js#L225) (kasuje też jego pozycje)
+- Kategorie: `pobierzKategorie` [236](js/db.js#L236), `dodajKategorie` [242](js/db.js#L242)
+- Cennik (= domyślne stawki, edytowalne w ekranie „Cennik”): `pobierzCennik` [252](js/db.js#L252) (sortuje wg kolejności kategorii, potem alfabetycznie), `dodajPozycjeCennika` [265](js/db.js#L265), `aktualizujPozycjeCennika` [278](js/db.js#L278), `usunPozycjeCennika` [283](js/db.js#L283)
+- Pozycje kosztorysu: `pobierzPozycjeProjektu` [290](js/db.js#L290), `dodajPozycjeKosztorysu` [296](js/db.js#L296), `aktualizujPozycjeKosztorysu` [313](js/db.js#L313), `usunPozycjeKosztorysu` [318](js/db.js#L318)
 
 ## js/app.js — UI, renderowanie, obsługa zdarzeń
 
 - `ustawWidok(widok, projektId)` — [app.js:28](js/app.js#L28) — przełącza widok: projekty / kosztorys / cennik
 - `renderProjekty()` — [app.js:47](js/app.js#L47) — lista projektów z sumą
 - `dialogNowyProjekt()` — [app.js:77](js/app.js#L77)
-- `renderKosztorys(projektId)` — [app.js:106](js/app.js#L106) — pozycje pogrupowane wg kategorii + podsumowanie + przyciski eksportu
-- `grupujPoKategorii(pozycje)` — [app.js:166](js/app.js#L166)
-- `dialogNowaPozycja(projektId)` — [app.js:175](js/app.js#L175) — formularz pozycji: wybór z cennika, wybór typowej podkategorii (autofill kategorii+nazwy) lub ręcznie, podgląd kwoty na żywo
-- `eksportujCSV(projekt, pozycje)` — [app.js:262](js/app.js#L262)
-- `renderCennik()` — [app.js:287](js/app.js#L287)
-- `dialogNowaPozycjaCennika()` — [app.js:326](js/app.js#L326) — j.w., też z podkategoriami
-- `htmlSelectPodkategorie(id, kategorie, podkategorie)` — [app.js:377](js/app.js#L377) — buduje `<select>` z `<optgroup>` per kategoria, w kolejności kategorii (nie w kolejności ID w bazie — ważne, bo IndexedDB nie gwarantuje kolejności wstawienia)
-- `otworzDialog(html)` / `zamknijDialog()` — generyczny wrapper na `<dialog>`
+- `renderKosztorys(projektId)` — [app.js:106](js/app.js#L106) — pozycje pogrupowane wg kategorii; stuknięcie wiersza = edycja, ikona 🗑 = usunięcie (osobny handler, `stopPropagation`)
+- `formatujStawke(stawka, jednostka)` — [app.js:172](js/app.js#L172) — "stawka nieustalona" zamiast "0,00 zł", żeby nie wyglądało jak realna darmowa usługa
+- `grupujPoKategorii(pozycje)` — [app.js:177](js/app.js#L177)
+- `dialogPozycja(projektId, edytowanaPozycja?)` — [app.js:186](js/app.js#L186) — jeden formularz do dodawania I edycji pozycji kosztorysu; wybór z cennika (grupowany wg kategorii) autofilluje nazwę+kategorię+jednostkę+stawkę
+- `htmlSelectCennik(id, kategorie, cennik)` — [app.js:279](js/app.js#L279) — `<select>` z `<optgroup>` per kategoria w kolejności etapów remontu (nie w kolejności ID w bazie)
+- `eksportujCSV(projekt, pozycje)` — [app.js:297](js/app.js#L297)
+- `renderCennik()` — [app.js:322](js/app.js#L322) — ekran "domyślne stawki"; stuknięcie wiersza = edycja stawki na stałe
+- `dialogPozycjaCennika(edytowanaPozycja?)` — [app.js:360](js/app.js#L360) — jeden formularz do dodawania I edycji pozycji cennika
+- `otworzDialog(html)` / `zamknijDialog()` — [app.js:412](js/app.js#L412) — generyczny wrapper na `<dialog>`
 
 ## Inne pliki
 
