@@ -3,7 +3,7 @@
 // dziś zawsze jeden, domyślny użytkownik, ale schemat jest gotowy na dodanie kolejnych kont później.
 
 const DB_NAME = 'majster-db';
-const DB_VERSION = 4;
+const DB_VERSION = 6;
 const DOMYSLNY_UZYTKOWNIK_ID = 'ja';
 
 // Pełna kolejność etapów wykończenia mieszkania (od przygotowania po odbiór).
@@ -129,6 +129,20 @@ export function openDB() {
       if (!db.objectStoreNames.contains('ustawienia')) {
         db.createObjectStore('ustawienia', { keyPath: 'id' });
       }
+      if (!db.objectStoreNames.contains('powiadomienia')) {
+        // Powiadomienia "w aplikacji" (nie systemowe/push - appka nie ma
+        // backendu do wysyłki). Generowane lokalnie na podstawie dat projektów
+        // przy każdym uruchomieniu (patrz sprawdzPowiadomieniaProjektow w app.js).
+        const store = db.createObjectStore('powiadomienia', { keyPath: 'id' });
+        store.createIndex('projekt_id', 'projekt_id', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('zdjecia')) {
+        // Zdjęcia "przed/po" dopięte do konkretnej pozycji kosztorysu - blob
+        // trzymany bezpośrednio w IndexedDB (nie w localStorage, za mały limit).
+        // Zostają TYLKO na tym urządzeniu - nie ma synchronizacji ani wysyłki nigdzie.
+        const store = db.createObjectStore('zdjecia', { keyPath: 'id' });
+        store.createIndex('pozycja_id', 'pozycja_id', { unique: false });
+      }
     };
 
     req.onsuccess = async (event) => {
@@ -188,6 +202,15 @@ export function cryptoId() {
   return 'id-' + Date.now() + '-' + Math.random().toString(16).slice(2);
 }
 
+// "Dzisiaj" jako RRRR-MM-DD w czasie LOKALNYM - NIE new Date().toISOString(),
+// bo ta konwertuje na UTC i potrafi cofnąć datę o dzień w nocy przy dodatniej
+// strefie czasowej. Ten sam helper co w app.js (dzisiajYMD) - osobno, bo to
+// dwa niezależne moduły bez wspólnego pliku narzędziowego dla jednej funkcji.
+function dzisiajYMD() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function withStore(db, storeName, mode, fn) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, mode);
@@ -209,6 +232,17 @@ function getAll(db, storeName, indexName, query) {
   });
 }
 
+// Pojedynczy rekord po kluczu głównym - do "usuń, ale zapamiętaj co, żeby dało
+// się cofnąć" (funkcje usunXxx poniżej pobierają nim rekord PRZED skasowaniem).
+function getOne(db, storeName, id) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).get(id);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
 // ---------- Projekty ----------
 
 export async function pobierzProjekty() {
@@ -217,7 +251,10 @@ export async function pobierzProjekty() {
   return projekty.sort((a, b) => b.data_utworzenia.localeCompare(a.data_utworzenia));
 }
 
-export async function dodajProjekt({ nazwa, klient }) {
+// `dataRozpoczecia` (YYYY-MM-DD, może być w przyszłości) - kiedy realnie
+// startują prace. Osobne pole od `data_utworzenia` (kiedy zapisano rekord
+// w appce - to zawsze "teraz", do sortowania "najnowsze" jako fallback).
+export async function dodajProjekt({ nazwa, klient, dataRozpoczecia }) {
   const db = await openDB();
   const projekt = {
     id: cryptoId(),
@@ -225,6 +262,8 @@ export async function dodajProjekt({ nazwa, klient }) {
     klient: (klient || '').trim(),
     status: 'wycena',
     data_utworzenia: new Date().toISOString(),
+    data_rozpoczecia: dataRozpoczecia || dzisiajYMD(),
+    data_zakonczenia: null,
   };
   await withStore(db, 'projekty', 'readwrite', (store) => store.put(projekt));
   return projekt;
@@ -262,12 +301,22 @@ export async function duplikujProjekt(projektId, nowaNazwa) {
   return { projekt: nowyProjekt, liczbaPozycji: pozycje.length };
 }
 
+// Zwraca skasowane dane (projekt, pozycje, płatności, zdjęcia) - do "Cofnij"
+// w UI (patrz przywrocProjekt). Kasuje też zdjęcia dopięte do pozycji tego
+// projektu, żeby nie zostawiać sierocych blobów w magazynie 'zdjecia'.
 export async function usunProjekt(projektId) {
   const db = await openDB();
-  const [pozycje, platnosci] = await Promise.all([
+  const [projekt, pozycje, platnosci, wszystkieZdjecia] = await Promise.all([
+    getOne(db, 'projekty', projektId),
     getAll(db, 'pozycje', 'projekt_id', projektId),
     getAll(db, 'platnosci', 'projekt_id', projektId),
+    getAll(db, 'zdjecia'),
   ]);
+  const idPozycji = new Set(pozycje.map((p) => p.id));
+  const zdjecia = wszystkieZdjecia.filter((z) => idPozycji.has(z.pozycja_id));
+  await withStore(db, 'zdjecia', 'readwrite', (store) => {
+    zdjecia.forEach((z) => store.delete(z.id));
+  });
   await withStore(db, 'pozycje', 'readwrite', (store) => {
     pozycje.forEach((p) => store.delete(p.id));
   });
@@ -275,6 +324,24 @@ export async function usunProjekt(projektId) {
     platnosci.forEach((p) => store.delete(p.id));
   });
   await withStore(db, 'projekty', 'readwrite', (store) => store.delete(projektId));
+  return { projekt, pozycje, platnosci, zdjecia };
+}
+
+// Cofnięcie usunięcia całego projektu - przywraca dokładnie to, co zwrócił usunProjekt.
+export async function przywrocProjekt({ projekt, pozycje, platnosci, zdjecia }) {
+  const db = await openDB();
+  await withStore(db, 'projekty', 'readwrite', (store) => store.put(projekt));
+  await withStore(db, 'pozycje', 'readwrite', (store) => {
+    pozycje.forEach((p) => store.put(p));
+  });
+  await withStore(db, 'platnosci', 'readwrite', (store) => {
+    platnosci.forEach((p) => store.put(p));
+  });
+  if (zdjecia?.length) {
+    await withStore(db, 'zdjecia', 'readwrite', (store) => {
+      zdjecia.forEach((z) => store.put(z));
+    });
+  }
 }
 
 // ---------- Kategorie ----------
@@ -288,7 +355,11 @@ export async function pobierzKategorie() {
 export async function dodajKategorie(nazwa) {
   const db = await openDB();
   const istniejace = await pobierzKategorie();
-  const kategoria = { id: cryptoId(), nazwa: nazwa.trim(), kolejnosc: istniejace.length, ukryta: false };
+  // Max+1, nie .length - po usunięciu kategorii (usunKategorieRazemZCennikiem)
+  // w numeracji `kolejnosc` zostają luki, więc .length mógłby trafić na już
+  // zajętą wartość (np. kategorie 0,1,3,4 mają length=4, a 4 jest zajęte).
+  const kolejnosc = istniejace.reduce((max, k) => Math.max(max, k.kolejnosc), -1) + 1;
+  const kategoria = { id: cryptoId(), nazwa: nazwa.trim(), kolejnosc, ukryta: false };
   await withStore(db, 'kategorie', 'readwrite', (store) => store.put(kategoria));
   return kategoria;
 }
@@ -311,6 +382,34 @@ export async function usunKategorieRazemZCennikiem(kategoriaId, nazwaKategorii) 
   });
   await withStore(db, 'kategorie', 'readwrite', (store) => store.delete(kategoriaId));
   return { usunietoZCennika: cennikDoUsuniecia.length };
+}
+
+// Przywraca fabryczny cennik i listę kategorii - kasuje WSZYSTKIE kategorie
+// i pozycje cennika (także własne, dodane przez użytkownika, i zmienione
+// stawki) i zasiewa od nowa z DOMYSLNY_CENNIK/DOMYSLNE_KATEGORIE. Projekty,
+// kosztorysy, płatności i dane firmy zostają nietknięte - kategoria zapisana
+// przy pozycji kosztorysu to zwykły tekst, nie referencja do id kategorii
+// (patrz komentarz w usunKategorieRazemZCennikiem), więc reset tu jej nie rusza.
+export async function przywrocDomyslnyCennik() {
+  const db = await openDB();
+  const [stareKategorie, staryCennik] = await Promise.all([getAll(db, 'kategorie'), getAll(db, 'cennik')]);
+  await withStore(db, 'kategorie', 'readwrite', (store) => {
+    stareKategorie.forEach((k) => store.delete(k.id));
+  });
+  await withStore(db, 'cennik', 'readwrite', (store) => {
+    staryCennik.forEach((c) => store.delete(c.id));
+  });
+  await withStore(db, 'kategorie', 'readwrite', (store) => {
+    DOMYSLNE_KATEGORIE.forEach((nazwa, kolejnosc) => {
+      store.put({ id: cryptoId(), nazwa, kolejnosc, ukryta: false });
+    });
+  });
+  await withStore(db, 'cennik', 'readwrite', (store) => {
+    DOMYSLNY_CENNIK.forEach((p) => {
+      store.put({ id: cryptoId(), kategoria: p.kategoria, nazwa: p.nazwa, jednostka: p.jednostka, stawka: p.stawka });
+    });
+  });
+  return { liczbaKategorii: DOMYSLNE_KATEGORIE.length, liczbaCennika: DOMYSLNY_CENNIK.length };
 }
 
 // Do liczenia, ile ZAPISANYCH pozycji kosztorysu (we wszystkich projektach)
@@ -377,8 +476,12 @@ export async function pobierzPozycjeSzablonu(nazwaSzablonu) {
 // realną ilość dla każdej pozycji z osobna po dodaniu (edycja jednym stuknięciem).
 export async function dodajWielePozycjiKosztorysu(projektId, listaPozycjiCennika, pomieszczenie) {
   const db = await openDB();
-  const teraz = new Date().toISOString();
-  const zapisane = listaPozycjiCennika.map((p) => ({
+  // Znaczniki czasu +1ms na pozycję (nie identyczny czas dla wszystkich) -
+  // `pobierzPozycjeProjektu` sortuje po `data`, a przy remisach o kolejności
+  // decyduje klucz główny (losowe UUID) z IndexedDB, co tasowało kolejność
+  // pozycji z szablonu przy odczycie (zweryfikowane empirycznie przed poprawką).
+  const bazowyCzas = Date.now();
+  const zapisane = listaPozycjiCennika.map((p, i) => ({
     id: cryptoId(),
     projekt_id: projektId,
     nazwa: p.nazwa,
@@ -388,7 +491,7 @@ export async function dodajWielePozycjiKosztorysu(projektId, listaPozycjiCennika
     stawka: p.stawka,
     pomieszczenie: (pomieszczenie || '').trim(),
     dodane_przez: DOMYSLNY_UZYTKOWNIK_ID,
-    data: teraz,
+    data: new Date(bazowyCzas + i).toISOString(),
   }));
   await withStore(db, 'pozycje', 'readwrite', (store) => {
     zapisane.forEach((p) => store.put(p));
@@ -401,6 +504,11 @@ export async function dodajWielePozycjiKosztorysu(projektId, listaPozycjiCennika
 // dopisuje nowe, ale NIE kasuje niczego, czego nie ma w pliku. Bezpieczny
 // domyślny wybór: przywrócenie kopii na czystym telefonie działa tak samo
 // jak "doklejenie" starszej kopii do już używanej instalacji.
+// Celowo BEZ 'zdjecia' - to blob'y (mogą być duże), a eksport/import przechodzi
+// przez JSON.stringify, który by je albo pominął, albo wymagał zamiany na
+// base64 i mocno napuchł plik kopii. Zdjęcia zostają tylko lokalnie na
+// urządzeniu i nie są objęte kopią zapasową - do rozważenia osobno, jeśli
+// będzie taka potrzeba.
 const WSZYSTKIE_STORY_KOPII = ['projekty', 'cennik', 'pozycje', 'kategorie', 'uzytkownicy', 'platnosci', 'ustawienia'];
 
 export async function eksportujCalaBaze() {
@@ -503,7 +611,14 @@ export async function aktualizujPozycjeCennika(pozycja) {
 
 export async function usunPozycjeCennika(id) {
   const db = await openDB();
+  const pozycja = await getOne(db, 'cennik', id);
   await withStore(db, 'cennik', 'readwrite', (store) => store.delete(id));
+  return pozycja;
+}
+
+export async function przywrocPozycjeCennika(pozycja) {
+  const db = await openDB();
+  await withStore(db, 'cennik', 'readwrite', (store) => store.put(pozycja));
 }
 
 // ---------- Pozycje kosztorysu ----------
@@ -539,7 +654,54 @@ export async function aktualizujPozycjeKosztorysu(pozycja) {
 
 export async function usunPozycjeKosztorysu(id) {
   const db = await openDB();
+  const [pozycja, zdjecia] = await Promise.all([
+    getOne(db, 'pozycje', id),
+    getAll(db, 'zdjecia', 'pozycja_id', id),
+  ]);
+  await withStore(db, 'zdjecia', 'readwrite', (store) => {
+    zdjecia.forEach((z) => store.delete(z.id));
+  });
   await withStore(db, 'pozycje', 'readwrite', (store) => store.delete(id));
+  return { pozycja, zdjecia };
+}
+
+export async function przywrocPozycjeKosztorysu({ pozycja, zdjecia }) {
+  const db = await openDB();
+  await withStore(db, 'pozycje', 'readwrite', (store) => store.put(pozycja));
+  if (zdjecia?.length) {
+    await withStore(db, 'zdjecia', 'readwrite', (store) => {
+      zdjecia.forEach((z) => store.put(z));
+    });
+  }
+}
+
+// ---------- Zdjęcia dopięte do pozycji kosztorysu ("przed/po") ----------
+// Zostają WYŁĄCZNIE na tym urządzeniu (IndexedDB) - nigdzie się nie wysyłają,
+// nie ma synchronizacji. Eksport/import kopii zapasowej (niżej) też je obejmuje.
+
+export async function dodajZdjeciePozycji(pozycjaId, blob) {
+  const db = await openDB();
+  const zdjecie = { id: cryptoId(), pozycja_id: pozycjaId, blob, data: new Date().toISOString() };
+  await withStore(db, 'zdjecia', 'readwrite', (store) => store.put(zdjecie));
+  return zdjecie;
+}
+
+export async function pobierzZdjeciaPozycji(pozycjaId) {
+  const db = await openDB();
+  const zdjecia = await getAll(db, 'zdjecia', 'pozycja_id', pozycjaId);
+  return zdjecia.sort((a, b) => a.data.localeCompare(b.data));
+}
+
+// Do liczników "ile zdjęć ma ta pozycja" na całej liście kosztorysu jednym
+// zapytaniem, zamiast osobnego zapytania na każdą pozycję.
+export async function pobierzWszystkieZdjecia() {
+  const db = await openDB();
+  return getAll(db, 'zdjecia');
+}
+
+export async function usunZdjeciePozycji(id) {
+  const db = await openDB();
+  await withStore(db, 'zdjecia', 'readwrite', (store) => store.delete(id));
 }
 
 // ---------- Płatności (zaliczki/wpłaty klienta na poczet projektu) ----------
@@ -550,13 +712,20 @@ export async function pobierzPlatnosciProjektu(projektId) {
   return platnosci.sort((a, b) => a.data.localeCompare(b.data));
 }
 
+// Do zakładki Podsumowanie - dochód liczony wg daty WPŁATY (nie daty projektu),
+// więc potrzebne wszystkie płatności naraz, ze wszystkich projektów.
+export async function pobierzWszystkiePlatnosci() {
+  const db = await openDB();
+  return getAll(db, 'platnosci');
+}
+
 export async function dodajPlatnosc(projektId, { kwota, data, opis }) {
   const db = await openDB();
   const platnosc = {
     id: cryptoId(),
     projekt_id: projektId,
     kwota: Number(kwota),
-    data: data || new Date().toISOString().slice(0, 10),
+    data: data || dzisiajYMD(),
     opis: (opis || '').trim(),
   };
   await withStore(db, 'platnosci', 'readwrite', (store) => store.put(platnosc));
@@ -565,7 +734,65 @@ export async function dodajPlatnosc(projektId, { kwota, data, opis }) {
 
 export async function usunPlatnosc(id) {
   const db = await openDB();
+  const platnosc = await getOne(db, 'platnosci', id);
   await withStore(db, 'platnosci', 'readwrite', (store) => store.delete(id));
+  return platnosc;
+}
+
+export async function przywrocPlatnosc(platnosc) {
+  const db = await openDB();
+  await withStore(db, 'platnosci', 'readwrite', (store) => store.put(platnosc));
+}
+
+// ---------- Powiadomienia (w aplikacji - appka nie ma backendu do wysyłki) ----------
+// Generowane lokalnie (patrz sprawdzPowiadomieniaProjektow w app.js) na
+// podstawie dat projektów. `typ` służy do odróżnienia rodzaju ('5dni', '2dni',
+// 'start') przy sprawdzaniu, czy dane powiadomienie już powstało - żeby nie
+// dublować przy każdym otwarciu appki.
+
+export async function pobierzPowiadomienia() {
+  const db = await openDB();
+  const powiadomienia = await getAll(db, 'powiadomienia');
+  return powiadomienia.sort((a, b) => b.data_utworzenia.localeCompare(a.data_utworzenia));
+}
+
+// Zwraca true, jeśli powiadomienie tego typu dla tego projektu już istnieje
+// (np. "5 dni przed" już raz wygenerowane) - bez tego każde otwarcie appki
+// w tym samym dniu dodawałoby duplikat.
+export async function istniejePowiadomienie(projektId, typ) {
+  const db = await openDB();
+  const dlaProjektu = await getAll(db, 'powiadomienia', 'projekt_id', projektId);
+  return dlaProjektu.some((p) => p.typ === typ);
+}
+
+export async function dodajPowiadomienie({ projektId, typ, tresc }) {
+  const db = await openDB();
+  const powiadomienie = {
+    id: cryptoId(),
+    projekt_id: projektId,
+    typ,
+    tresc,
+    data_utworzenia: new Date().toISOString(),
+    przeczytane: false,
+  };
+  await withStore(db, 'powiadomienia', 'readwrite', (store) => store.put(powiadomienie));
+  return powiadomienie;
+}
+
+export async function oznaczPowiadomieniaJakoPrzeczytane() {
+  const db = await openDB();
+  const wszystkie = await getAll(db, 'powiadomienia');
+  const nieprzeczytane = wszystkie.filter((p) => !p.przeczytane);
+  if (nieprzeczytane.length === 0) return;
+  await withStore(db, 'powiadomienia', 'readwrite', (store) => {
+    nieprzeczytane.forEach((p) => store.put({ ...p, przeczytane: true }));
+  });
+}
+
+export async function pobierzLiczbeNieprzeczytanychPowiadomien() {
+  const db = await openDB();
+  const wszystkie = await getAll(db, 'powiadomienia');
+  return wszystkie.filter((p) => !p.przeczytane).length;
 }
 
 // ---------- Ustawienia (dane firmy do nagłówka wydruku/PDF) ----------
@@ -575,12 +802,26 @@ const ID_USTAWIEN_FIRMY = 'firma';
 export async function pobierzDaneFirmy() {
   const db = await openDB();
   const wszystkie = await getAll(db, 'ustawienia');
-  return wszystkie.find((u) => u.id === ID_USTAWIEN_FIRMY) || { id: ID_USTAWIEN_FIRMY, nazwa: '', telefon: '', email: '' };
+  return wszystkie.find((u) => u.id === ID_USTAWIEN_FIRMY) || { id: ID_USTAWIEN_FIRMY, nazwa: '', telefon: '', email: '', logo: null };
 }
 
+// UWAGA: `put()` na IndexedDB podmienia CAŁY rekord, nie scala pól - stąd
+// dociągnięcie obecnego `logo` przed zapisem. Bez tego zwykły zapis telefonu/
+// e-maila (formularz nie zna pola logo) wyzerowałby wcześniej wgrane logo.
 export async function zapiszDaneFirmy({ nazwa, telefon, email }) {
   const db = await openDB();
-  const dane = { id: ID_USTAWIEN_FIRMY, nazwa: (nazwa || '').trim(), telefon: (telefon || '').trim(), email: (email || '').trim() };
+  const obecne = await pobierzDaneFirmy();
+  const dane = { id: ID_USTAWIEN_FIRMY, nazwa: (nazwa || '').trim(), telefon: (telefon || '').trim(), email: (email || '').trim(), logo: obecne.logo || null };
+  await withStore(db, 'ustawienia', 'readwrite', (store) => store.put(dane));
+  return dane;
+}
+
+// Logo firmy jako data URL (string) - osobna funkcja z tego samego powodu co
+// wyżej: zapis logo nie może wyzerować nazwy/telefonu/e-maila.
+export async function zapiszLogoFirmy(logoDataUrl) {
+  const db = await openDB();
+  const obecne = await pobierzDaneFirmy();
+  const dane = { ...obecne, logo: logoDataUrl || null };
   await withStore(db, 'ustawienia', 'readwrite', (store) => store.put(dane));
   return dane;
 }

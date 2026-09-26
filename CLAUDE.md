@@ -117,16 +117,31 @@ zielone, bezwartościowe wyniki. Zawsze sprawdź na starcie, czy dane w ogóle s
   (np. OpenCV 5 zwraca z `HoughLinesP` tablicę `(N, 4)` zamiast `(N, 1, 4)`).
   Gdy kod wywala się na rozpakowaniu wyniku — sprawdź wersję, nie przepisuj
   logiki.
-- **Podgląd w Browser pane (`preview_start`) cache'uje pliki statyczne przez
-  jakieś proxy pomiędzy przeglądarką a `python -m http.server`** — po edycji
-  JS/CSS potrafi serwować starą wersję nawet z `fetch(..., {cache:'no-store'})`
-  i po ręcznym czyszczeniu Cache API/Service Workera w stronie. Objaw: kod na
-  dysku jest poprawny (`grep`/`Read` to potwierdza), ale zachowanie w
-  przeglądarce odpowiada starej wersji. Obejście: `preview_stop` +
-  `preview_start` od nowa, albo dopisanie unikalnego query stringa do URL
-  zasobu (`/js/app.js?bust=<timestamp>`) żeby ominąć cache po kluczu URL.
-  To problem samego narzędzia deweloperskiego, nie realnego hostingu
-  (GitHub Pages nie ma tego problemu).
+- **Podgląd w Browser pane (`preview_start`) potrafi serwować starą wersję
+  JS/CSS mimo poprawnego kodu na dysku** — dwie NIEZALEŻNE przyczyny, obie
+  dają ten sam objaw (kod na dysku poprawny wg `grep`/`Read`, zachowanie w
+  przeglądarce jak stara wersja):
+  1. Jakieś proxy pomiędzy przeglądarką a `python -m http.server` cache'uje
+     po URL. Obejście: dopisanie unikalnego query stringa do URL zasobu
+     (`/js/app.js?bust=<timestamp>`) albo pełny `preview_stop`+`preview_start`.
+  2. **Własny Service Worker aplikacji (`sw.js`, strategia cache-first) —
+     zarejestrowany w karcie z WCZEŚNIEJSZEJO ładowania, przechwytuje
+     `fetch` dla modułów JS i serwuje starą wersję z `caches.match()`,
+     całkowicie NIEZALEŻNIE od restartu serwera podglądu i od query stringa
+     na URL strony.** Objaw specyficzny dla tego przypadku: `fetch()` z konsoli
+     zwraca świeży plik, ale `<script type="module">` / `import()` tego
+     samego pliku w tej samej karcie dostaje starą treść (np. brak nowo
+     dodanego eksportu → `SyntaxError: does not provide an export named`).
+     Jedyne pewne obejście: w konsoli karty odpalić
+     `(await navigator.serviceWorker.getRegistrations()).forEach(r=>r.unregister())`
+     oraz `(await caches.keys()).forEach(n=>caches.delete(n))`, dopiero potem
+     nawigować. Samo bumpowanie query stringa NIE wystarcza, gdy winowajcą
+     jest SW. Sprawdzone empirycznie 2026-09-26 przy dodawaniu funkcji
+     przywracania domyślnego cennika.
+  To problem samego narzędzia deweloperskiego / stanu karty testowej, nie
+  realnego hostingu (GitHub Pages + realna instalacja PWA nie mają tego
+  problemu — tam SW aktualizuje się przez zwykły mechanizm `controllerchange`
+  po zmianie `CACHE_NAZWA`).
 - Heredoc w Bashu przy długich plikach potrafi się urwać. Do pisania plików
   używaj `Write`, nie `cat << EOF`.
 

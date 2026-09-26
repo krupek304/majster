@@ -1,5 +1,5 @@
 // Service worker - cache app shell, żeby appka działała offline po dodaniu do ekranu głównego.
-const CACHE_NAZWA = 'majster-v9';
+const CACHE_NAZWA = 'majster-v26';
 const PLIKI_DO_CACHE = [
   './',
   './index.html',
@@ -11,6 +11,36 @@ const PLIKI_DO_CACHE = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-180.png',
+  './fonts/oswald-700-latin.woff2',
+  './fonts/oswald-700-latin-ext.woff2',
+  './icons-ui/camera.svg',
+  './icons-ui/x.svg',
+  './icons-ui/clipboard-check.svg',
+  './icons-ui/clipboard-list.svg',
+  './icons-ui/door-open.svg',
+  './icons-ui/droplets.svg',
+  './icons-ui/folder.svg',
+  './icons-ui/file-text.svg',
+  './icons-ui/hard-hat.svg',
+  './icons-ui/check-circle.svg',
+  './icons-ui/grid-2x2.svg',
+  './icons-ui/grid-3x3.svg',
+  './icons-ui/hammer.svg',
+  './icons-ui/lock.svg',
+  './icons-ui/home.svg',
+  './icons-ui/layers.svg',
+  './icons-ui/paint-bucket.svg',
+  './icons-ui/paintbrush.svg',
+  './icons-ui/ruler.svg',
+  './icons-ui/settings.svg',
+  './icons-ui/sparkles.svg',
+  './icons-ui/trash-2.svg',
+  './icons-ui/utensils-crossed.svg',
+  './icons-ui/wand-2.svg',
+  './icons-ui/zap.svg',
+  './icons-ui/bar-chart-3.svg',
+  './icons-ui/chevron-left.svg',
+  './icons-ui/chevron-right.svg',
 ];
 
 self.addEventListener('install', (event) => {

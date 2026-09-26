@@ -1,12 +1,15 @@
 import {
-  pobierzProjekty, dodajProjekt, usunProjekt, aktualizujProjekt, duplikujProjekt,
-  pobierzKategorie, dodajKategorie, aktualizujKategorie, usunKategorieRazemZCennikiem,
-  pobierzCennik, dodajPozycjeCennika, aktualizujPozycjeCennika, usunPozycjeCennika,
-  pobierzPozycjeProjektu, dodajPozycjeKosztorysu, aktualizujPozycjeKosztorysu, usunPozycjeKosztorysu,
+  pobierzProjekty, dodajProjekt, usunProjekt, przywrocProjekt, aktualizujProjekt, duplikujProjekt,
+  pobierzKategorie, dodajKategorie, aktualizujKategorie, usunKategorieRazemZCennikiem, przywrocDomyslnyCennik,
+  pobierzCennik, dodajPozycjeCennika, aktualizujPozycjeCennika, usunPozycjeCennika, przywrocPozycjeCennika,
+  pobierzPozycjeProjektu, dodajPozycjeKosztorysu, aktualizujPozycjeKosztorysu, usunPozycjeKosztorysu, przywrocPozycjeKosztorysu,
   pobierzWszystkiePozycjeKosztorysu, dodajWielePozycjiKosztorysu,
   pobierzNazwySzablonowPomieszczen, pobierzPozycjeSzablonu,
-  pobierzPlatnosciProjektu, dodajPlatnosc, usunPlatnosc,
-  pobierzDaneFirmy, zapiszDaneFirmy,
+  pobierzPlatnosciProjektu, dodajPlatnosc, usunPlatnosc, przywrocPlatnosc, pobierzWszystkiePlatnosci,
+  pobierzDaneFirmy, zapiszDaneFirmy, zapiszLogoFirmy,
+  dodajZdjeciePozycji, pobierzZdjeciaPozycji, pobierzWszystkieZdjecia, usunZdjeciePozycji,
+  pobierzPowiadomienia, istniejePowiadomienie, dodajPowiadomienie,
+  oznaczPowiadomieniaJakoPrzeczytane, pobierzLiczbeNieprzeczytanychPowiadomien,
   eksportujCalaBaze, importujCalaBaze,
 } from './db.js';
 import { kwotaPozycji, sumyKategorii, sumyPolem, sumaCalkowita, sumaPlatnosci, formatujKwote } from './calc.js';
@@ -15,8 +18,13 @@ const app = document.getElementById('app');
 const topbarTitle = document.getElementById('topbar-title');
 const dialog = document.getElementById('dialog');
 const tabButtons = document.querySelectorAll('.tab-btn');
+const btnPowiadomienia = document.getElementById('btn-powiadomienia');
+const odznakaPowiadomien = document.getElementById('odznaka-powiadomien');
 
-const state = { widok: 'projekty', projektId: null, grupowanie: 'kategoria' };
+const state = {
+  widok: 'projekty', projektId: null, grupowanie: 'kategoria', filtrProjekty: '', sortowanieProjektow: 'data',
+  podsumowanieTryb: 'miesiac', podsumowanieRok: new Date().getFullYear(), podsumowanieMiesiac: new Date().getMonth(),
+};
 
 // Zamknięty zestaw jednostek - te same, których używają domyślne pozycje
 // cennika w db.js. Zamiast wolnego tekstu (łatwo o literówkę typu "m2"/"m²"/"metr")
@@ -30,7 +38,25 @@ const POMIESZCZENIA_PODPOWIEDZI = [
 ];
 
 // Ikony kategorii - tylko orientacja wzrokowa w długiej liście, nie wpływają na dane.
+// Pliki SVG (Lucide, self-hosted w icons-ui/) do kontekstów HTML - w <option>/<optgroup
+// label> HTML się nie renderuje, więc tam używamy osobnej mapy z emoji (IKONY_KATEGORII_TEKST).
 const IKONY_KATEGORII = {
+  'Przygotowanie i planowanie': 'clipboard-check',
+  'Prace rozbiórkowe i konstrukcyjne': 'hammer',
+  'Instalacje wewnętrzne (stan surowy)': 'zap',
+  'Prace tynkarskie i wylewki': 'layers',
+  'Zabudowy z płyt gipsowo-kartonowych (GK)': 'ruler',
+  'Prace glazurnicze i terakota': 'grid-3x3',
+  'Gładzie i przygotowanie ścian do malowania': 'paintbrush',
+  'Podłogi': 'grid-2x2',
+  'Stolarka drzwiowa i okienna': 'door-open',
+  'Malowanie i wykończenie ścian': 'paint-bucket',
+  'Biały montaż i osprzęt': 'droplets',
+  'Kuchnia i AGD': 'utensils-crossed',
+  'Sprzątanie i odbiór': 'sparkles',
+  'Prace dodatkowe i opcjonalne': 'wand-2',
+};
+const IKONY_KATEGORII_TEKST = {
   'Przygotowanie i planowanie': '📋',
   'Prace rozbiórkowe i konstrukcyjne': '🔨',
   'Instalacje wewnętrzne (stan surowy)': '🔌',
@@ -46,21 +72,174 @@ const IKONY_KATEGORII = {
   'Sprzątanie i odbiór': '🧹',
   'Prace dodatkowe i opcjonalne': '✨',
 };
+
+// Zwraca <span> z ikoną SVG jako maskę tła - dziedziczy kolor (currentColor) z otoczenia,
+// więc jedna i ta sama ikona pasuje do jasnego/ciemnego motywu i do koloru odznaki.
+function ikonaSvg(plik, klasy = '') {
+  return `<span class="ikona-svg ${klasy}" style="--ikona:url('../icons-ui/${plik}.svg')"></span>`;
+}
+// Do kontekstów HTML (nagłówki, listy, wiersze) - ikona kategorii jako SVG.
 function ikonaKategorii(nazwa) {
-  return IKONY_KATEGORII[nazwa] || '📁';
+  return ikonaSvg(IKONY_KATEGORII[nazwa] || 'folder');
+}
+// Ta sama ikona w kolorowym kółku (odznaka) - do widoczniejszych miejsc, np. lista
+// kategorii w Ustawieniach.
+function ikonaKategoriiOdznaka(nazwa) {
+  return `<span class="ikona-badge">${ikonaKategorii(nazwa)}</span>`;
+}
+// Do <option>/<optgroup label="..."> - HTML się tam nie renderuje, więc emoji (zwykły znak).
+function ikonaKategoriiTekst(nazwa) {
+  return IKONY_KATEGORII_TEKST[nazwa] || '📁';
+}
+
+// Animowany baner z nazwą - litery wjeżdżają pojedynczo (CSS, .baner-tytul
+// span). Dwie odsłony współdzielą tę samą logikę liter: pełna (okno powitalne
+// O!Majster, z ikoną w kółku i podkreśleniem) i kompaktowa (na stałe w pasku
+// na górze KAŻDEGO ekranu - Projekty, Cennik, Ustawienia - z własną ikoną
+// i tekstem). `aria-label` na rodzicu daje czytnikom ekranu jedno słowo
+// zamiast osobnych liter.
+function htmlLiteryBaneru(tekst) {
+  return tekst.split('').map((znak, i) => `<span aria-hidden="true" style="--i:${i}">${znak}</span>`).join('');
+}
+function htmlBanerPelny() {
+  return `
+    <div class="baner-powitalny">
+      <span class="baner-ikona">${ikonaSvg('hammer')}</span>
+      <h2 class="baner-tytul" aria-label="O!Majster">${htmlLiteryBaneru('O!Majster')}</h2>
+      <span class="baner-podkreslenie"></span>
+    </div>
+  `;
+}
+// `klasa` dodatkowa tylko dla banera O!Majster - to on ma pomarańczowy
+// wykrzyknik jako drugi "znak" (patrz .topbar-baner-omajster w CSS); Cennik/
+// Ustawienia nie mają tej sztucznej reguły na drugiej literze.
+function htmlBanerKompaktowy(plikIkony = 'hammer', tekst = 'O!Majster', klasa = '') {
+  return `
+    <span class="topbar-baner ${klasa}" aria-label="${esc(tekst)}">
+      <span class="topbar-baner-ikona">${ikonaSvg(plikIkony)}</span>
+      <span class="baner-tytul topbar-baner-tekst">${htmlLiteryBaneru(tekst)}</span>
+    </span>
+  `;
+}
+
+// Wyraźny komunikat "dane zostają na telefonie" - pokazywany przy pierwszym
+// uruchomieniu (okno powitalne) i za każdym razem przy zakładaniu nowego
+// projektu, żeby to zaufanie było widoczne, nie tylko zadeklarowane raz.
+// Sprawdzone 2026-09-27: appka nie ma ani jednego wywołania sieciowego, które
+// wysyłałoby dane użytkownika (jedyny fetch to Service Worker cache'ujący
+// własne pliki appki) - jedyne dwa wyjątki to ręczne "Udostępnij" i eksport
+// PDF/kopii zapasowej, oba w pełni sterowane przez użytkownika.
+function htmlNotatkaPrywatnosci() {
+  return `
+    <div class="uwaga-prywatnosc">
+      ${ikonaSvg('lock')}
+      <span>Wszystkie dane (projekty, kosztorysy, zdjęcia) zostają <strong>wyłącznie na tym telefonie</strong>. Aplikacja nie ma serwera i nic nie wysyła do internetu bez Twojej wyraźnej akcji (np. „Udostępnij”).</span>
+    </div>
+  `;
 }
 
 // Paleta do paska podziału kosztów - cykliczna, wystarcza na więcej niż 14 kategorii.
 const PALETA_WYKRESU = ['#ea580c', '#0ea5e9', '#22c55e', '#a855f7', '#f43f5e', '#eab308', '#14b8a6', '#6366f1', '#f97316', '#84cc16', '#ec4899', '#06b6d4', '#8b5cf6', '#64748b'];
 
 // Statusy projektu - czysto organizacyjne, nie wpływają na liczenie sumy.
+// Ikona obok koloru - kolor sam w sobie jest słabo dostępny (osoby z zaburzeniami
+// rozpoznawania barw, ostre słońce na budowie), ikona daje drugi, niezależny sygnał.
 const STATUSY = {
-  wycena: { etykieta: 'Wycena', kolor: '#94a3b8' },
-  w_trakcie: { etykieta: 'W trakcie', kolor: '#0ea5e9' },
-  zakonczony: { etykieta: 'Zakończony', kolor: '#22c55e' },
+  wycena: { etykieta: 'Wycena', kolor: '#94a3b8', ikona: 'file-text' },
+  w_trakcie: { etykieta: 'W trakcie', kolor: '#0ea5e9', ikona: 'hard-hat' },
+  zakonczony: { etykieta: 'Zakończony', kolor: '#22c55e', ikona: 'check-circle' },
 };
 function statusProjektu(projekt) {
   return STATUSY[projekt.status] ? projekt.status : 'wycena';
+}
+function htmlOdznakaStatusu(status) {
+  const s = STATUSY[status];
+  return `<span class="odznaka-statusu" style="background:${s.kolor}">${ikonaSvg(s.ikona)}${s.etykieta}</span>`;
+}
+
+// Moment zakończenia projektu - zamiast konfetti (za mało "biznesowe" na
+// narzędzie do kosztorysów): animowany znaczek zatwierdzenia (SVG, rysuje się
+// samo przez stroke-dashoffset) i zaraz po nim karta z krótkim podsumowaniem
+// projektu. Jedno okno, jedna spójna sekwencja.
+function pokazZakonczenieProjektu(projekt, pozycje) {
+  const suma = sumaCalkowita(pozycje);
+  const liczbaKategorii = new Set(pozycje.map((p) => p.kategoria)).size;
+  const start = new Date(dataRozpoczeciaProjektu(projekt) + 'T00:00:00');
+  const koniec = new Date((projekt.data_zakonczenia || dzisiajYMD()) + 'T00:00:00');
+  const liczbaDni = Math.max(0, Math.round((koniec - start) / 86400000));
+
+  otworzDialog(`
+    <div class="podsumowanie-zakonczenia">
+      <svg class="check-svg" viewBox="0 0 52 52">
+        <circle class="check-okrag" cx="26" cy="26" r="24" fill="none" />
+        <path class="check-znak" fill="none" d="M14 27l7 7 16-16" />
+      </svg>
+      <h2 class="check-tytul">Projekt zakończony!</h2>
+      <div class="karta-podsumowania-projektu">
+        <div class="wiersz-podsumowania"><span>Projekt</span><span>${esc(projekt.nazwa)}</span></div>
+        <div class="wiersz-podsumowania"><span>Czas trwania</span><span>${liczbaDni} ${odmienDni(liczbaDni)}</span></div>
+        <div class="wiersz-podsumowania"><span>Kategorii prac</span><span>${liczbaKategorii}</span></div>
+        <div class="wiersz-podsumowania wiersz-suma"><span>Wartość kosztorysu</span><span>${formatujKwote(suma)}</span></div>
+      </div>
+      <button class="btn" id="btn-zamknij-podsumowanie">Świetna robota</button>
+    </div>
+  `);
+  document.getElementById('btn-zamknij-podsumowanie').addEventListener('click', () => {
+    zamknijDialog();
+    renderKosztorys(projekt.id);
+  });
+}
+// "dzień/dni" ma tylko dwie formy w polskim (nie trzy jak np. "pozycja/-e/-i") -
+// 1 to zawsze "dzień", każda inna liczba (w tym 0) to "dni".
+function odmienDni(n) {
+  return n === 1 ? 'dzień' : 'dni';
+}
+
+// ---------- Wygląd: jasny / ciemny / systemowy ----------
+// Domyślnie appka podąża za ustawieniem telefonu (media query w CSS), ale da
+// się to wymusić w Ustawieniach. Wybór to czysto lokalna preferencja urządzenia
+// (nie dane biznesowe), stąd localStorage a nie baza - i dlatego zapisuje się
+// też inline-script w <head> (żeby ustawić atrybut PRZED pierwszym rysowaniem
+// strony, bez mignięcia złym motywem).
+const KLUCZ_MOTYWU = 'o-majster-motyw';
+function pobierzMotyw() {
+  try {
+    const zapisany = localStorage.getItem(KLUCZ_MOTYWU);
+    return zapisany === 'jasny' || zapisany === 'ciemny' ? zapisany : 'system';
+  } catch {
+    return 'system';
+  }
+}
+function zastosujMotyw(motyw) {
+  if (motyw === 'jasny' || motyw === 'ciemny') {
+    document.documentElement.setAttribute('data-motyw', motyw);
+  } else {
+    document.documentElement.removeAttribute('data-motyw');
+  }
+  try {
+    if (motyw === 'system') localStorage.removeItem(KLUCZ_MOTYWU);
+    else localStorage.setItem(KLUCZ_MOTYWU, motyw);
+  } catch {
+    // localStorage niedostępny (np. tryb prywatny) - motyw zadziała do końca
+    // tej sesji (atrybut jest ustawiony), tylko nie przetrwa zamknięcia appki.
+  }
+  odswiezKolorPaskaStatusu();
+}
+// Pasek statusu telefonu (kolor "theme-color") ma pasować do faktycznie
+// widocznego motywu - łącznie z przypadkiem "systemowy", gdzie liczy się
+// aktualne ustawienie telefonu, nie żaden zapamiętany wybór.
+function odswiezKolorPaskaStatusu() {
+  const meta = document.getElementById('meta-kolor-paska');
+  if (!meta) return;
+  const motyw = pobierzMotyw();
+  const ciemny = motyw === 'ciemny'
+    || (motyw === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  meta.setAttribute('content', ciemny ? '#0b1220' : '#1e293b');
+}
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (pobierzMotyw() === 'system') odswiezKolorPaskaStatusu();
+  });
 }
 
 // Zapamiętywanie ostatnio wpisanej ilości dla danej pozycji cennika - czysto
@@ -84,10 +263,56 @@ function zapamietajIlosc(cennikId, ilosc) {
   }
 }
 
+// "Dzisiaj" jako RRRR-MM-DD w czasie LOKALNYM - NIE new Date().toISOString(),
+// bo ta konwertuje na UTC i potrafi cofnąć datę o dzień w nocy przy dodatniej
+// strefie czasowej (np. 00:30 w Polsce latem = 22:30 UTC dnia poprzedniego).
+// Znalezione empirycznie 2026-09-27 przy testowaniu powiadomień o datach.
+function dzisiajYMD() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function esc(str) {
   const d = document.createElement('div');
   d.textContent = str ?? '';
   return d.innerHTML;
+}
+
+// ---------- Obrazy: logo firmy i zdjęcia pozycji ----------
+// Zdjęcie z aparatu telefonu potrafi mieć kilkanaście MB - zanim trafi do
+// IndexedDB, skalujemy je w dół przez <canvas>. Bez tego kilka zdjęć na
+// pozycję szybko napuchłoby bazę i spowolniło appkę.
+function wczytajObraz(plik) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Nie udało się odczytać pliku jako obrazu.'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('Nie udało się odczytać pliku.'));
+    reader.readAsDataURL(plik);
+  });
+}
+function skalujDoCanvas(obraz, maxSzerokosc) {
+  const skala = obraz.width > maxSzerokosc ? maxSzerokosc / obraz.width : 1;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(obraz.width * skala));
+  canvas.height = Math.max(1, Math.round(obraz.height * skala));
+  canvas.getContext('2d').drawImage(obraz, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+// Logo jako PNG (zachowuje przezroczyste tło, typowe dla logotypów).
+async function plikNaDataUrl(plik, maxSzerokosc = 400) {
+  const obraz = await wczytajObraz(plik);
+  return skalujDoCanvas(obraz, maxSzerokosc).toDataURL('image/png');
+}
+// Zdjęcia "przed/po" jako skompresowany JPEG (mniejszy rozmiar, tu nie liczy
+// się przezroczystość).
+async function plikNaBlob(plik, maxSzerokosc = 1000) {
+  const obraz = await wczytajObraz(plik);
+  return new Promise((resolve) => skalujDoCanvas(obraz, maxSzerokosc).toBlob(resolve, 'image/jpeg', 0.85));
 }
 
 function htmlSelectJednostka(id, wybrana) {
@@ -121,58 +346,172 @@ tabButtons.forEach((btn) => {
 });
 
 function ustawWidok(widok, projektId = null) {
-  state.widok = widok;
-  state.projektId = projektId;
-  tabButtons.forEach((btn) => {
-    if (btn.dataset.widok === widok) btn.setAttribute('aria-current', 'page');
-    else btn.removeAttribute('aria-current');
-  });
-  render();
+  const wykonaj = async () => {
+    state.widok = widok;
+    state.projektId = projektId;
+    tabButtons.forEach((btn) => {
+      if (btn.dataset.widok === widok) btn.setAttribute('aria-current', 'page');
+      else btn.removeAttribute('aria-current');
+    });
+    await render();
+  };
+  // View Transitions API - natywne przejście (cross-fade) między ekranami.
+  // Bez wsparcia przeglądarki (starsze niż Safari 18) po prostu renderuje od razu.
+  if (document.startViewTransition) {
+    document.startViewTransition(wykonaj);
+  } else {
+    wykonaj();
+  }
 }
 
+// Szkielet ładowania TYLKO tutaj (dyspozytor wołany przy realnej zmianie
+// zakładki/wejściu w projekt) - nie w poszczególnych funkcjach renderujących,
+// bo te są też wołane wprost do zwykłego odświeżenia tego samego ekranu (np.
+// po dodaniu pozycji) i tam szkielet migałby bez potrzeby przy każdej akcji.
 async function render() {
+  pokazSzkielet(state.widok);
   if (state.widok === 'projekty') return renderProjekty();
   if (state.widok === 'kosztorys') return renderKosztorys(state.projektId);
   if (state.widok === 'cennik') return renderCennik();
+  if (state.widok === 'podsumowanie') return renderPodsumowanie();
   if (state.widok === 'ustawienia') return renderUstawienia();
+}
+
+function pokazSzkielet(widok) {
+  if (widok === 'kosztorys') app.innerHTML = htmlSzkieletKosztorys();
+  else if (widok === 'ustawienia') app.innerHTML = htmlSzkieletUstawienia();
+  else app.innerHTML = htmlSzkieletListy();
+}
+function htmlSzkieletListy() {
+  return Array.from({ length: 3 }).map(() => `
+    <div class="karta szkielet-karta">
+      <span class="szkielet-pasek" style="width:55%; height:16px;"></span>
+      <span class="szkielet-pasek" style="width:35%; height:12px;"></span>
+      <span class="szkielet-pasek" style="width:74px; height:20px; border-radius:999px; margin-top:2px;"></span>
+    </div>
+  `).join('');
+}
+function htmlSzkieletKosztorys() {
+  return `
+    <div class="karta szkielet-karta" style="margin-bottom:10px;">
+      <span class="szkielet-pasek" style="width:40%; height:16px;"></span>
+    </div>
+    <div class="karta">
+      ${Array.from({ length: 4 }).map((_, i) => `
+        <div class="szkielet-karta" style="padding:10px 0; ${i < 3 ? 'border-bottom:1px solid var(--linia);' : ''}">
+          <span class="szkielet-pasek" style="width:60%; height:14px;"></span>
+          <span class="szkielet-pasek" style="width:30%; height:11px;"></span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+function htmlSzkieletUstawienia() {
+  return Array.from({ length: 2 }).map(() => `
+    <div class="karta szkielet-karta">
+      <span class="szkielet-pasek" style="width:30%; height:16px;"></span>
+      <span class="szkielet-pasek" style="height:38px; border-radius:8px;"></span>
+      <span class="szkielet-pasek" style="height:38px; border-radius:8px;"></span>
+    </div>
+  `).join('');
 }
 
 // ---------- Widok: Projekty ----------
 
+let projektyPamiec = [];
+
 async function renderProjekty() {
-  topbarTitle.textContent = 'O!Majster';
+  topbarTitle.innerHTML = htmlBanerKompaktowy('hammer', 'O!Majster', 'topbar-baner-omajster');
   const projekty = await pobierzProjekty();
   const sumyProjektow = await Promise.all(
     projekty.map(async (p) => sumaCalkowita(await pobierzPozycjeProjektu(p.id)))
   );
-
-  const listaHtml = projekty.length === 0
-    ? '<div class="pusty-stan">Brak projektów.<br>Dodaj pierwszy kosztorys.</div>'
-    : projekty.map((p, i) => `
-      <div class="karta karta-projekt" data-id="${p.id}">
-        <div>
-          <div class="nazwa">${esc(p.nazwa)}</div>
-          <div class="klient">${esc(p.klient) || 'Bez klienta'} &middot; ${new Date(p.data_utworzenia).toLocaleDateString('pl-PL')}</div>
-          <span class="odznaka-statusu" style="background:${STATUSY[statusProjektu(p)].kolor}">${STATUSY[statusProjektu(p)].etykieta}</span>
-        </div>
-        <div class="suma">${formatujKwote(sumyProjektow[i])}</div>
-      </div>
-    `).join('');
+  projektyPamiec = projekty.map((p, i) => ({ ...p, _suma: sumyProjektow[i] }));
 
   app.innerHTML = `
-    ${listaHtml}
+    ${projektyPamiec.length > 0 ? `
+      <input id="szukaj-projekty" type="text" placeholder="🔍 Szukaj po nazwie lub kliencie..." value="${esc(state.filtrProjekty)}" style="margin-bottom:10px;" />
+      <div class="przelacznik-grupowania">
+        <button class="btn-segment ${state.sortowanieProjektow === 'data' ? 'aktywny' : ''}" data-sortuj-projekty="data">Najnowsze</button>
+        <button class="btn-segment ${state.sortowanieProjektow === 'nazwa' ? 'aktywny' : ''}" data-sortuj-projekty="nazwa">Nazwa</button>
+        <button class="btn-segment ${state.sortowanieProjektow === 'kwota' ? 'aktywny' : ''}" data-sortuj-projekty="kwota">Kwota</button>
+      </div>
+    ` : ''}
+    <div id="lista-projektow"></div>
     <button class="btn" id="btn-nowy-projekt">+ Nowy projekt</button>
   `;
 
-  app.querySelectorAll('.karta-projekt').forEach((el) => {
-    el.addEventListener('click', () => ustawWidok('kosztorys', el.dataset.id));
+  renderListaProjektow();
+
+  const poleSzukaj = document.getElementById('szukaj-projekty');
+  if (poleSzukaj) {
+    poleSzukaj.addEventListener('input', () => {
+      state.filtrProjekty = poleSzukaj.value;
+      renderListaProjektow();
+    });
+  }
+  app.querySelectorAll('[data-sortuj-projekty]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.sortowanieProjektow = btn.dataset.sortujProjekty;
+      renderProjekty();
+    });
   });
   document.getElementById('btn-nowy-projekt').addEventListener('click', dialogNowyProjekt);
+}
+
+// Osobno od renderProjekty(), żeby wpisywanie w polu szukania nie przebudowywało
+// całego ekranu (a razem z nim samego pola - kursor/fokus by uciekał przy
+// każdej literze). Sortuje i filtruje projektyPamiec zebrane przy ostatnim
+// pełnym renderze, bez ponownego odpytywania bazy.
+// Data rozpoczęcia to nowe pole (dodane 2026-09-27) - starsze projekty go nie
+// mają, stąd fallback na datę utworzenia rekordu.
+function dataRozpoczeciaProjektu(p) {
+  return p.data_rozpoczecia || p.data_utworzenia.slice(0, 10);
+}
+// `dataYMD` to zwykłe "RRRR-MM-DD" (bez godziny) - dopisanie T00:00:00 zamiast
+// samego przekazania do Date() pilnuje, żeby parsowanie było w czasie lokalnym,
+// nie UTC (inaczej przy ujemnej strefie czasowej data potrafi "cofnąć się" o dzień).
+function formatujDateYMD(dataYMD) {
+  if (!dataYMD) return '';
+  return new Date(dataYMD + 'T00:00:00').toLocaleDateString('pl-PL');
+}
+
+function renderListaProjektow() {
+  const fraza = state.filtrProjekty.trim().toLowerCase();
+  const przefiltrowane = !fraza
+    ? projektyPamiec
+    : projektyPamiec.filter((p) => p.nazwa.toLowerCase().includes(fraza) || (p.klient || '').toLowerCase().includes(fraza));
+
+  const posortowane = [...przefiltrowane].sort((a, b) => {
+    if (state.sortowanieProjektow === 'nazwa') return a.nazwa.localeCompare(b.nazwa, 'pl');
+    if (state.sortowanieProjektow === 'kwota') return b._suma - a._suma;
+    return dataRozpoczeciaProjektu(b).localeCompare(dataRozpoczeciaProjektu(a));
+  });
+
+  const kontener = document.getElementById('lista-projektow');
+  kontener.innerHTML = posortowane.length === 0
+    ? `<div class="pusty-stan">${projektyPamiec.length === 0 ? 'Brak projektów.<br>Dodaj pierwszy kosztorys.' : 'Brak wyników dla tej frazy.'}</div>`
+    : posortowane.map((p) => `
+      <div class="karta karta-projekt" data-id="${p.id}">
+        <div>
+          <div class="nazwa">${esc(p.nazwa)}</div>
+          <div class="klient">${esc(p.klient) || 'Bez klienta'} &middot; ${formatujDateYMD(dataRozpoczeciaProjektu(p))}</div>
+          ${htmlOdznakaStatusu(statusProjektu(p))}
+          ${p.data_zakonczenia ? `<span class="znacznik-zakonczenia">Zakończono ${formatujDateYMD(p.data_zakonczenia)}</span>` : ''}
+        </div>
+        <div class="suma">${formatujKwote(p._suma)}</div>
+      </div>
+    `).join('');
+
+  kontener.querySelectorAll('.karta-projekt').forEach((el) => {
+    el.addEventListener('click', () => ustawWidok('kosztorys', el.dataset.id));
+  });
 }
 
 function dialogNowyProjekt() {
   otworzDialog(`
     <h2>Nowy projekt</h2>
+    ${htmlNotatkaPrywatnosci()}
     <div class="pole">
       <label for="pole-nazwa">Nazwa projektu</label>
       <input id="pole-nazwa" type="text" placeholder="np. Mieszkanie ul. Kwiatowa 5" />
@@ -180,6 +519,10 @@ function dialogNowyProjekt() {
     <div class="pole">
       <label for="pole-klient">Klient (opcjonalnie)</label>
       <input id="pole-klient" type="text" placeholder="np. Jan Kowalski" />
+    </div>
+    <div class="pole">
+      <label for="pole-data-rozpoczecia">Data rozpoczęcia</label>
+      <input id="pole-data-rozpoczecia" type="date" value="${dzisiajYMD()}" />
     </div>
     <div class="dialog-akcje">
       <button class="btn wtorny" id="btn-anuluj">Anuluj</button>
@@ -191,7 +534,8 @@ function dialogNowyProjekt() {
     const nazwa = document.getElementById('pole-nazwa').value.trim();
     if (!nazwa) return;
     const klient = document.getElementById('pole-klient').value;
-    const projekt = await dodajProjekt({ nazwa, klient });
+    const dataRozpoczecia = document.getElementById('pole-data-rozpoczecia').value;
+    const projekt = await dodajProjekt({ nazwa, klient, dataRozpoczecia });
     zamknijDialog();
     ustawWidok('kosztorys', projekt.id);
   });
@@ -199,7 +543,35 @@ function dialogNowyProjekt() {
 
 // ---------- Widok: Kosztorys projektu ----------
 
+// Czyta liczbę z tekstu sformatowanego przez formatujKwote (np. "3 420,00 zł"),
+// żeby animacja licznika miała punkt startowy przy re-renderze tego samego widoku.
+function odczytajKwote(tekst) {
+  if (!tekst) return NaN;
+  return parseFloat(tekst.replace(/[^\d,-]/g, '').replace(',', '.'));
+}
+
+// Animuje kwotę od poprzedniej do nowej wartości (rAF, ease-out, ~450ms) - czysto
+// kosmetyczne. Bez sensownej wartości startowej (pierwszy render widoku) ustawia
+// docelową liczbę od razu, bez odliczania od zera.
+function animujKwote(element, od, docelowa) {
+  if (!element) return;
+  if (!Number.isFinite(od) || od === docelowa) {
+    element.textContent = formatujKwote(docelowa);
+    return;
+  }
+  const czasStart = performance.now();
+  const czasTrwania = 450;
+  function krok(teraz) {
+    const postep = Math.min((teraz - czasStart) / czasTrwania, 1);
+    const wygladzony = 1 - Math.pow(1 - postep, 3);
+    element.textContent = formatujKwote(od + (docelowa - od) * wygladzony);
+    if (postep < 1) requestAnimationFrame(krok);
+  }
+  requestAnimationFrame(krok);
+}
+
 async function renderKosztorys(projektId) {
+  const poprzedniaKwota = odczytajKwote(app.querySelector('.kwota-calkowita')?.textContent);
   const projekty = await pobierzProjekty();
   const projekt = projekty.find((p) => p.id === projektId);
   if (!projekt) return ustawWidok('projekty');
@@ -207,11 +579,14 @@ async function renderKosztorys(projektId) {
   topbarTitle.innerHTML = `<button class="wstecz" id="btn-wstecz">←</button> ${esc(projekt.nazwa)}`;
   document.getElementById('btn-wstecz').addEventListener('click', () => ustawWidok('projekty'));
 
-  const [pozycje, platnosci, firma] = await Promise.all([
+  const [pozycje, platnosci, firma, wszystkieZdjecia] = await Promise.all([
     pobierzPozycjeProjektu(projektId),
     pobierzPlatnosciProjektu(projektId),
     pobierzDaneFirmy(),
+    pobierzWszystkieZdjecia(),
   ]);
+  const liczbaZdjecPozycji = new Map();
+  wszystkieZdjecia.forEach((z) => liczbaZdjecPozycji.set(z.pozycja_id, (liczbaZdjecPozycji.get(z.pozycja_id) || 0) + 1));
 
   const pole = state.grupowanie === 'pomieszczenie' ? 'pomieszczenie' : 'kategoria';
   const domyslnaEtykieta = state.grupowanie === 'pomieszczenie' ? 'Bez pomieszczenia' : 'Bez kategorii';
@@ -225,28 +600,35 @@ async function renderKosztorys(projektId) {
       ${poz.map((p) => `
         <div class="pozycja" data-edytuj="${p.id}">
           <div>
-            <div class="nazwa">${esc(p.nazwa)}</div>
+            <div class="nazwa">${esc(p.nazwa)}${liczbaZdjecPozycji.has(p.id) ? ` <span class="znacznik-zdjec" title="${liczbaZdjecPozycji.get(p.id)} zdjęć">${ikonaSvg('camera')} ${liczbaZdjecPozycji.get(p.id)}</span>` : ''}</div>
             <div class="szczegoly">${p.ilosc} ${esc(p.jednostka)} &times; ${formatujStawke(p.stawka, p.jednostka)}${htmlDrugiWymiar(p)}</div>
           </div>
           <div class="kwota">${p.stawka ? formatujKwote(kwotaPozycji(p.ilosc, p.stawka)) : '—'}</div>
-          <button class="btn-usun" data-usun="${p.id}" aria-label="Usuń" title="Usuń">🗑</button>
+          <button class="btn-usun" data-usun="${p.id}" aria-label="Usuń" title="Usuń">${ikonaSvg('trash-2')}</button>
         </div>
       `).join('')}
     `).join('');
 
   app.innerHTML = `
     <div class="naglowek-druku">
+      ${firma.logo ? `<img class="logo-druk" src="${firma.logo}" alt="Logo firmy" />` : ''}
       ${firma.nazwa || firma.telefon || firma.email ? `<div class="firma-druk">${[esc(firma.nazwa), firma.telefon ? 'tel. ' + esc(firma.telefon) : '', esc(firma.email)].filter(Boolean).join(' &middot; ')}</div>` : ''}
       <h1>Kosztorys</h1>
       <div class="meta-druku">
         <div><strong>Projekt:</strong> ${esc(projekt.nazwa)}</div>
         ${projekt.klient ? `<div><strong>Klient:</strong> ${esc(projekt.klient)}</div>` : ''}
-        <div><strong>Data:</strong> ${new Date().toLocaleDateString('pl-PL')}</div>
+        <div><strong>Rozpoczęcie:</strong> ${formatujDateYMD(dataRozpoczeciaProjektu(projekt))}</div>
+        ${projekt.data_zakonczenia ? `<div><strong>Zakończenie:</strong> ${formatujDateYMD(projekt.data_zakonczenia)}</div>` : ''}
+        <div><strong>Data wydruku:</strong> ${new Date().toLocaleDateString('pl-PL')}</div>
       </div>
     </div>
-    ${projekt.klient ? `<div class="uwaga">Klient: ${esc(projekt.klient)}</div>` : ''}
+    <div class="uwaga">
+      ${projekt.klient ? `Klient: ${esc(projekt.klient)}<br>` : ''}
+      Rozpoczęcie: ${formatujDateYMD(dataRozpoczeciaProjektu(projekt))}${projekt.data_zakonczenia ? ` &middot; Zakończono: ${formatujDateYMD(projekt.data_zakonczenia)}` : ''}
+    </div>
+    <div class="podpowiedz-statusu">Status ustawiasz ręcznie. Data zakończenia pojawia się i znika razem z nim - wybór „Zakończony” ją zapisuje, każdy inny status ją czyści.</div>
     <div class="przelacznik-grupowania">
-      ${Object.entries(STATUSY).map(([klucz, s]) => `<button class="btn-segment ${statusProjektu(projekt) === klucz ? 'aktywny' : ''}" data-status="${klucz}">${s.etykieta}</button>`).join('')}
+      ${Object.entries(STATUSY).map(([klucz, s]) => `<button class="btn-segment ${statusProjektu(projekt) === klucz ? 'aktywny' : ''}" data-status="${klucz}">${ikonaSvg(s.ikona)} ${s.etykieta}</button>`).join('')}
     </div>
     ${pozycje.length > 0 ? `
       <div class="przelacznik-grupowania">
@@ -266,23 +648,24 @@ async function renderKosztorys(projektId) {
       <span class="kwota-calkowita">${formatujKwote(suma)}</span>
     </div>
     <div class="akcje-eksportu">
-      <button class="btn wtorny" id="btn-drukuj">Drukuj / PDF</button>
-      <button class="btn wtorny" id="btn-csv">Eksport CSV</button>
+      <button class="btn wtorny" id="btn-drukuj">Eksportuj PDF</button>
       <button class="btn wtorny" id="btn-udostepnij" hidden>Udostępnij</button>
       <button class="btn wtorny" id="btn-duplikuj">Duplikuj projekt</button>
       <button class="btn wtorny niebezpieczny" id="btn-usun-projekt">Usuń projekt</button>
     </div>
   `;
 
+  animujKwote(app.querySelector('.kwota-calkowita'), poprzedniaKwota, suma);
+
   document.getElementById('btn-dodaj-pozycje').addEventListener('click', () => dialogPozycja(projektId));
   document.getElementById('btn-dodaj-szablon').addEventListener('click', () => dialogSzablonPomieszczenia(projektId));
   document.getElementById('btn-drukuj').addEventListener('click', () => window.print());
-  document.getElementById('btn-csv').addEventListener('click', () => eksportujCSV(projekt, pozycje));
   document.getElementById('btn-duplikuj').addEventListener('click', () => dialogDuplikujProjekt(projekt));
   document.getElementById('btn-usun-projekt').addEventListener('click', async () => {
     if (!confirm(`Usunąć projekt "${projekt.nazwa}" wraz ze wszystkimi pozycjami?`)) return;
-    await usunProjekt(projektId);
+    const usuniete = await usunProjekt(projektId);
     ustawWidok('projekty');
+    pokazCofnij(`Usunięto projekt „${projekt.nazwa}”.`, () => przywrocProjekt(usuniete));
   });
   const btnUdostepnij = document.getElementById('btn-udostepnij');
   if (navigator.share) {
@@ -291,8 +674,20 @@ async function renderKosztorys(projektId) {
   }
   app.querySelectorAll('[data-status]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      await aktualizujProjekt({ ...projekt, status: btn.dataset.status });
-      renderKosztorys(projektId);
+      const nowyStatus = btn.dataset.status;
+      const byloZakonczone = statusProjektu(projekt) === 'zakonczony';
+      const zmiany = { ...projekt, status: nowyStatus };
+      // Data zakończenia podąża za statusem - ustawiana tylko ręczną zmianą
+      // statusu na "Zakończony", czyszczona przy każdej zmianie na inny status.
+      // (Wcześniej ustawiał ją też sam fakt 100% wpłat, niezależnie od statusu -
+      // efekt: karta pokazywała "W trakcie" i "Zakończono DATA" jednocześnie.)
+      zmiany.data_zakonczenia = nowyStatus === 'zakonczony' ? (projekt.data_zakonczenia || dzisiajYMD()) : null;
+      await aktualizujProjekt(zmiany);
+      if (nowyStatus === 'zakonczony' && !byloZakonczone) {
+        pokazZakonczenieProjektu(zmiany, pozycje);
+      } else {
+        renderKosztorys(projektId);
+      }
     });
   });
   app.querySelectorAll('[data-grupuj]').forEach((btn) => {
@@ -310,8 +705,10 @@ async function renderKosztorys(projektId) {
   app.querySelectorAll('[data-usun]').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await usunPozycjeKosztorysu(btn.dataset.usun);
+      const pozycja = pozycje.find((p) => p.id === btn.dataset.usun);
+      const usuniete = await usunPozycjeKosztorysu(btn.dataset.usun);
       renderKosztorys(projektId);
+      pokazCofnij(`Usunięto „${pozycja.nazwa}”.`, () => przywrocPozycjeKosztorysu(usuniete));
     });
   });
 
@@ -319,8 +716,9 @@ async function renderKosztorys(projektId) {
   if (btnDodajPlatnosc) btnDodajPlatnosc.addEventListener('click', () => dialogPlatnosc(projektId));
   app.querySelectorAll('[data-usun-platnosc]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      await usunPlatnosc(btn.dataset.usunPlatnosc);
+      const usunieta = await usunPlatnosc(btn.dataset.usunPlatnosc);
       renderKosztorys(projektId);
+      pokazCofnij(`Usunięto wpłatę ${formatujKwote(usunieta.kwota)}.`, () => przywrocPlatnosc(usunieta));
     });
   });
 }
@@ -374,11 +772,12 @@ function htmlPlatnosci(platnosci, suma) {
   const zaplacono = sumaPlatnosci(platnosci);
   const pozostalo = Math.round((suma - zaplacono) * 100) / 100;
   const listaHtml = platnosci.map((p) => `
-    <div class="pozycja" data-usun-platnosc="${p.id}">
+    <div class="pozycja pozycja-platnosci">
       <div>
         <div class="nazwa">${formatujKwote(p.kwota)}</div>
         <div class="szczegoly">${new Date(p.data).toLocaleDateString('pl-PL')}${p.opis ? ' &middot; ' + esc(p.opis) : ''}</div>
       </div>
+      <button class="btn-usun" data-usun-platnosc="${p.id}" aria-label="Usuń wpłatę" title="Usuń wpłatę">${ikonaSvg('trash-2')}</button>
     </div>
   `).join('');
   return `
@@ -395,7 +794,7 @@ function htmlPlatnosci(platnosci, suma) {
 }
 
 function dialogPlatnosc(projektId) {
-  const dzisiaj = new Date().toISOString().slice(0, 10);
+  const dzisiaj = dzisiajYMD();
   otworzDialog(`
     <h2>Nowa wpłata</h2>
     <div class="pole">
@@ -430,7 +829,11 @@ function dialogPlatnosc(projektId) {
 }
 
 async function dialogPozycja(projektId, edytowanaPozycja = null) {
-  const [kategorieWszystkie, cennik] = await Promise.all([pobierzKategorie(), pobierzCennik()]);
+  const [kategorieWszystkie, cennik, zdjecia] = await Promise.all([
+    pobierzKategorie(),
+    pobierzCennik(),
+    edytowanaPozycja ? pobierzZdjeciaPozycji(edytowanaPozycja.id) : Promise.resolve([]),
+  ]);
   const kategorie = kategorieWidoczne(kategorieWszystkie, edytowanaPozycja?.kategoria);
   const edycja = !!edytowanaPozycja;
 
@@ -439,8 +842,8 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
     ${cennik.length > 0 ? `
       <div class="pole">
         <label for="szukaj-cennik">Z cennika (opcjonalnie)</label>
-        <input id="szukaj-cennik" type="text" placeholder="Szukaj czynności..." style="margin-bottom:6px;" />
-        ${htmlSelectCennik('pole-z-cennika', kategorieWszystkie, cennik)}
+        <input id="szukaj-cennik" type="text" placeholder="🔍 Szukaj czynności..." style="margin-bottom:6px;" />
+        ${htmlSelectCennik('pole-z-cennika', kategorie, cennik)}
       </div>
     ` : ''}
     <div class="pole">
@@ -448,9 +851,9 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
       <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" value="${esc(edytowanaPozycja?.nazwa)}" />
     </div>
     <div class="pole">
-      <label for="pole-kategoria">Kategoria</label>
-      <select id="pole-kategoria">
-        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${edytowanaPozycja?.kategoria === k.nazwa ? 'selected' : ''}>${ikonaKategorii(k.nazwa)} ${esc(k.nazwa)}</option>`).join('')}
+      <label for="pole-kategoria">Kategoria (dobierana automatycznie z czynności)</label>
+      <select id="pole-kategoria" disabled>
+        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${edytowanaPozycja?.kategoria === k.nazwa ? 'selected' : ''}>${ikonaKategoriiTekst(k.nazwa)} ${esc(k.nazwa)}</option>`).join('')}
       </select>
     </div>
     <div class="pole">
@@ -460,22 +863,25 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
         ${POMIESZCZENIA_PODPOWIEDZI.map((p) => `<option value="${esc(p)}"></option>`).join('')}
       </datalist>
     </div>
-    <div class="pole">
-      <label for="pole-ilosc">Ilość</label>
-      <input id="pole-ilosc" type="number" step="0.01" min="0" value="${edytowanaPozycja?.ilosc ?? 1}" />
-    </div>
-    <div class="pole">
-      <label for="pole-jednostka">Jednostka</label>
-      ${htmlSelectJednostka('pole-jednostka', edytowanaPozycja?.jednostka ?? 'szt.')}
+    <div class="wiersz-pol">
+      <div class="pole">
+        <label for="pole-ilosc">Ilość</label>
+        <input id="pole-ilosc" type="number" step="0.01" min="0" value="${edytowanaPozycja?.ilosc ?? 1}" />
+      </div>
+      <div class="pole">
+        <label for="pole-jednostka">Jednostka</label>
+        ${htmlSelectJednostka('pole-jednostka', edytowanaPozycja?.jednostka ?? 'szt.')}
+      </div>
     </div>
     <div class="pole">
       <label for="pole-stawka">Stawka za jednostkę (zł)</label>
       <input id="pole-stawka" type="number" step="0.01" min="0" value="${edytowanaPozycja?.stawka ?? 0}" />
     </div>
-    <div class="pole">
-      <label>Kwota</label>
-      <div id="podglad-kwoty" style="font-weight:600; font-size:16px;">0,00 zł</div>
+    <div class="podglad-kwoty-box">
+      <span>Kwota</span>
+      <span id="podglad-kwoty">0,00 zł</span>
     </div>
+    ${edycja ? htmlSekcjaZdjec(zdjecia) : ''}
     <div class="dialog-akcje">
       <button class="btn wtorny" id="btn-anuluj">Anuluj</button>
       <button class="btn" id="btn-zapisz">${edycja ? 'Zapisz zmiany' : 'Dodaj'}</button>
@@ -538,6 +944,56 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
     zamknijDialog();
     renderKosztorys(projektId);
   });
+
+  if (edycja) {
+    const inputZdjecie = document.getElementById('plik-zdjecie');
+    inputZdjecie.addEventListener('change', async () => {
+      const plik = inputZdjecie.files[0];
+      if (!plik) return;
+      try {
+        const blob = await plikNaBlob(plik);
+        await dodajZdjeciePozycji(edytowanaPozycja.id, blob);
+        dialogPozycja(projektId, edytowanaPozycja);
+      } catch (err) {
+        alert(`Nie udało się dodać zdjęcia: ${err.message}`);
+      }
+    });
+    document.querySelectorAll('[data-usun-zdjecie]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        await usunZdjeciePozycji(btn.dataset.usunZdjecie);
+        dialogPozycja(projektId, edytowanaPozycja);
+      });
+    });
+  }
+}
+
+// Miniatury zdjęć "przed/po" dopiętych do pozycji kosztorysu - tylko przy
+// edycji już zapisanej pozycji (nowa jeszcze nie ma id, do którego dopiąć
+// zdjęcie w bazie). `data-url` na miniaturze znaczy URL.createObjectURL() do
+// zwolnienia przy zamknięciu/odświeżeniu dialogu (patrz sprzatnijUrleObiektow).
+function htmlSekcjaZdjec(zdjecia) {
+  const miniatury = zdjecia.map((z) => {
+    const url = URL.createObjectURL(z.blob);
+    return `
+      <div class="miniatura-zdjecia" data-url="${url}">
+        <img src="${url}" alt="Zdjęcie pozycji" />
+        <button class="btn-usun-miniatura" data-usun-zdjecie="${z.id}" type="button" aria-label="Usuń zdjęcie">${ikonaSvg('x')}</button>
+      </div>
+    `;
+  }).join('');
+  return `
+    <div class="pole">
+      <label>Zdjęcia (przed/po) - zostają tylko na tym telefonie</label>
+      <div class="siatka-zdjec">
+        ${miniatury}
+        <label class="dodaj-zdjecie">
+          ${ikonaSvg('camera')}
+          <input type="file" id="plik-zdjecie" accept="image/*" capture="environment" hidden />
+        </label>
+      </div>
+    </div>
+  `;
 }
 
 // Ukrywa (nie usuwa z DOM) opcje/optgroupy z cennika niepasujące do frazy -
@@ -563,7 +1019,7 @@ function htmlSelectCennik(id, kategorie, cennik) {
     const lista = cennik.filter((c) => c.kategoria === k.nazwa);
     if (lista.length === 0) return '';
     return `
-      <optgroup label="${ikonaKategorii(k.nazwa)} ${esc(k.nazwa)}">
+      <optgroup label="${ikonaKategoriiTekst(k.nazwa)} ${esc(k.nazwa)}">
         ${lista.map((c) => `<option value="${c.id}">${esc(c.nazwa)} (${c.stawka ? formatujKwote(c.stawka) + '/' + esc(c.jednostka) : 'stawka do ustalenia'})</option>`).join('')}
       </optgroup>
     `;
@@ -574,29 +1030,6 @@ function htmlSelectCennik(id, kategorie, cennik) {
       ${optgroups}
     </select>
   `;
-}
-
-function eksportujCSV(projekt, pozycje) {
-  const naglowek = ['Kategoria', 'Pomieszczenie', 'Nazwa', 'Ilość', 'Jednostka', 'Stawka', 'Kwota'];
-  const wiersze = pozycje.map((p) => [
-    p.kategoria, p.pomieszczenie || '', p.nazwa, p.ilosc, p.jednostka, p.stawka, kwotaPozycji(p.ilosc, p.stawka),
-  ]);
-  wiersze.push([]);
-  wiersze.push(['', '', '', '', '', 'RAZEM', sumaCalkowita(pozycje)]);
-
-  const csv = [naglowek, ...wiersze]
-    .map((wiersz) => wiersz.map((pole) => `"${String(pole ?? '').replace(/"/g, '""')}"`).join(';'))
-    .join('\r\n');
-
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `kosztorys-${projekt.nazwa.replace(/[^a-z0-9ąćęłńóśźż]+/gi, '-')}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 function dialogDuplikujProjekt(projekt) {
@@ -695,7 +1128,7 @@ async function dialogSzablonPomieszczenia(projektId) {
 let cennikPamiec = [];
 
 async function renderCennik() {
-  topbarTitle.textContent = 'Cennik';
+  topbarTitle.innerHTML = htmlBanerKompaktowy('clipboard-list', 'Cennik');
   cennikPamiec = await pobierzCennik();
 
   app.innerHTML = `
@@ -725,7 +1158,7 @@ function renderListaCennika(filtr) {
           <div class="nazwa">${esc(c.nazwa)}</div>
           <div class="szczegoly">${ikonaKategorii(c.kategoria)} ${esc(c.kategoria)} &middot; ${formatujStawke(c.stawka, c.jednostka)}</div>
         </div>
-        <button class="btn-usun" data-usun="${c.id}" aria-label="Usuń" title="Usuń">🗑</button>
+        <button class="btn-usun" data-usun="${c.id}" aria-label="Usuń" title="Usuń">${ikonaSvg('trash-2')}</button>
       </div>
     `).join('');
 
@@ -738,16 +1171,18 @@ function renderListaCennika(filtr) {
   kontener.querySelectorAll('[data-usun]').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await usunPozycjeCennika(btn.dataset.usun);
+      const usunieta = await usunPozycjeCennika(btn.dataset.usun);
       renderCennik();
+      pokazCofnij(`Usunięto „${usunieta.nazwa}” z cennika.`, () => przywrocPozycjeCennika(usunieta));
     });
   });
 }
 
-async function dialogPozycjaCennika(edytowanaPozycja = null) {
+async function dialogPozycjaCennika(edytowanaPozycja = null, domyslnaKategoria = null, naZapisano = renderCennik) {
   const kategorieWszystkie = await pobierzKategorie();
-  const kategorie = kategorieWidoczne(kategorieWszystkie, edytowanaPozycja?.kategoria);
+  const kategorie = kategorieWidoczne(kategorieWszystkie, edytowanaPozycja?.kategoria ?? domyslnaKategoria);
   const edycja = !!edytowanaPozycja;
+  const wybranaKategoria = edytowanaPozycja?.kategoria ?? domyslnaKategoria;
   otworzDialog(`
     <h2>${edycja ? 'Edytuj stawkę' : 'Nowa czynność w cenniku'}</h2>
     <div class="pole">
@@ -757,7 +1192,7 @@ async function dialogPozycjaCennika(edytowanaPozycja = null) {
     <div class="pole">
       <label for="pole-kategoria">Kategoria</label>
       <select id="pole-kategoria">
-        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${edytowanaPozycja?.kategoria === k.nazwa ? 'selected' : ''}>${ikonaKategorii(k.nazwa)} ${esc(k.nazwa)}</option>`).join('')}
+        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${wybranaKategoria === k.nazwa ? 'selected' : ''}>${ikonaKategoriiTekst(k.nazwa)} ${esc(k.nazwa)}</option>`).join('')}
       </select>
     </div>
     <div class="pole">
@@ -791,17 +1226,199 @@ async function dialogPozycjaCennika(edytowanaPozycja = null) {
       await dodajPozycjeCennika(dane);
     }
     zamknijDialog();
-    renderCennik();
+    naZapisano();
+  });
+}
+
+// ---------- Widok: Podsumowanie (miesięczne/roczne) ----------
+// Dwie NIEZALEŻNE rzeczy, obie potrzebne, ale liczone inaczej (decyzja
+// 2026-09-27): "liczba projektów" w danym miesiącu/roku wg daty ROZPOCZĘCIA
+// projektu; "dochód" to suma faktycznie WPŁACONYCH kwot wg daty WPŁATY -
+// więc wpłata za projekt rozpoczęty we wrześniu, wpłacona w październiku,
+// liczy się do dochodu października, a projekt nadal wisi na liście września.
+
+const MIESIACE_PL = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
+
+let podsumowaniePamiec = { projekty: [], platnosci: [] };
+
+async function renderPodsumowanie() {
+  topbarTitle.innerHTML = htmlBanerKompaktowy('bar-chart-3', 'Podsumowanie');
+  const [projekty, platnosci] = await Promise.all([pobierzProjekty(), pobierzWszystkiePlatnosci()]);
+  const sumy = await Promise.all(projekty.map(async (p) => sumaCalkowita(await pobierzPozycjeProjektu(p.id))));
+  podsumowaniePamiec = {
+    projekty: projekty.map((p, i) => ({ ...p, _suma: sumy[i] })),
+    platnosci,
+  };
+
+  app.innerHTML = `
+    <div class="przelacznik-grupowania">
+      <button class="btn-segment ${state.podsumowanieTryb === 'miesiac' ? 'aktywny' : ''}" data-tryb-podsum="miesiac">Miesięcznie</button>
+      <button class="btn-segment ${state.podsumowanieTryb === 'rok' ? 'aktywny' : ''}" data-tryb-podsum="rok">Rocznie</button>
+    </div>
+    <div id="tresc-podsumowania"></div>
+  `;
+  app.querySelectorAll('[data-tryb-podsum]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.podsumowanieTryb = btn.dataset.trybPodsum;
+      renderTrescPodsumowania();
+    });
+  });
+  renderTrescPodsumowania();
+}
+
+function projektyRoku(rok) {
+  return podsumowaniePamiec.projekty.filter((p) => dataRozpoczeciaProjektu(p).slice(0, 4) === String(rok));
+}
+function projektyMiesiaca(rok, miesiac) {
+  const prefiks = `${rok}-${String(miesiac + 1).padStart(2, '0')}`;
+  return podsumowaniePamiec.projekty.filter((p) => dataRozpoczeciaProjektu(p).startsWith(prefiks));
+}
+function wplatySumaWFiltrze(filtrPrefiks) {
+  return podsumowaniePamiec.platnosci
+    .filter((pl) => pl.data.startsWith(filtrPrefiks))
+    .reduce((acc, pl) => acc + Number(pl.kwota || 0), 0);
+}
+function odmienProjekty(n) {
+  if (n === 1) return 'projekt';
+  const ost = n % 10;
+  const dzies = n % 100;
+  if (ost >= 2 && ost <= 4 && !(dzies >= 12 && dzies <= 14)) return 'projekty';
+  return 'projektów';
+}
+
+function renderTrescPodsumowania() {
+  app.querySelectorAll('[data-tryb-podsum]').forEach((btn) => {
+    btn.classList.toggle('aktywny', btn.dataset.trybPodsum === state.podsumowanieTryb);
+  });
+  const kontener = document.getElementById('tresc-podsumowania');
+  kontener.innerHTML = state.podsumowanieTryb === 'rok' ? htmlPodsumowanieRoku() : htmlPodsumowanieMiesiaca();
+  wirePodsumowanie();
+}
+
+function htmlPodsumowanieRoku() {
+  const rok = state.podsumowanieRok;
+  const projektyTegoRoku = projektyRoku(rok);
+  const sumaWplatRoku = wplatySumaWFiltrze(String(rok));
+
+  const wierszeMiesiecy = MIESIACE_PL.map((nazwa, i) => {
+    const liczbaProj = projektyMiesiaca(rok, i).length;
+    const wplaty = wplatySumaWFiltrze(`${rok}-${String(i + 1).padStart(2, '0')}`);
+    return `
+      <div class="wiersz-miesiaca" data-miesiac="${i}">
+        <span class="nazwa-miesiaca">${nazwa}</span>
+        <span class="liczba-miesiaca">${liczbaProj} ${odmienProjekty(liczbaProj)}</span>
+        <span class="kwota-miesiaca">${formatujKwote(wplaty)}</span>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="nawigacja-okresu">
+      <button class="btn-nawigacja-okresu" id="btn-poprzedni-rok" aria-label="Poprzedni rok">${ikonaSvg('chevron-left')}</button>
+      <span class="etykieta-okresu">${rok}</span>
+      <button class="btn-nawigacja-okresu" id="btn-nastepny-rok" aria-label="Następny rok">${ikonaSvg('chevron-right')}</button>
+    </div>
+    <div class="karta">
+      <div class="wiersz-podsumowania"><span>Projektów rozpoczętych w ${rok}</span><span>${projektyTegoRoku.length}</span></div>
+      <div class="wiersz-podsumowania wiersz-suma"><span>Wpłacono w ${rok}</span><span>${formatujKwote(sumaWplatRoku)}</span></div>
+    </div>
+    <div class="uwaga">Liczba projektów liczona wg daty rozpoczęcia. Wpłaty liczone wg daty wpłaty - mogą pochodzić też z projektów rozpoczętych w innym roku. Stuknij miesiąc, żeby zobaczyć jego projekty.</div>
+    <div class="karta lista-miesiecy">${wierszeMiesiecy}</div>
+  `;
+}
+
+function htmlPodsumowanieMiesiaca() {
+  const rok = state.podsumowanieRok;
+  const miesiac = state.podsumowanieMiesiac;
+  const projektyMies = projektyMiesiaca(rok, miesiac).sort((a, b) => dataRozpoczeciaProjektu(a).localeCompare(dataRozpoczeciaProjektu(b)));
+  const wplaty = wplatySumaWFiltrze(`${rok}-${String(miesiac + 1).padStart(2, '0')}`);
+
+  const listaHtml = projektyMies.length === 0
+    ? '<div class="pusty-stan-male">Brak projektów rozpoczętych w tym miesiącu.</div>'
+    : projektyMies.map((p) => `
+      <div class="pozycja karta-projekt-podsumowania" data-id="${p.id}">
+        <div>
+          <div class="nazwa">${esc(p.nazwa)}</div>
+          <div class="szczegoly">${esc(p.klient) || 'Bez klienta'} &middot; ${formatujDateYMD(dataRozpoczeciaProjektu(p))}</div>
+          ${htmlOdznakaStatusu(statusProjektu(p))}
+        </div>
+        <div class="kwota">${formatujKwote(p._suma)}</div>
+      </div>
+    `).join('');
+
+  return `
+    <div class="nawigacja-okresu">
+      <button class="btn-nawigacja-okresu" id="btn-poprzedni-miesiac" aria-label="Poprzedni miesiąc">${ikonaSvg('chevron-left')}</button>
+      <span class="etykieta-okresu">${MIESIACE_PL[miesiac]} ${rok}</span>
+      <button class="btn-nawigacja-okresu" id="btn-nastepny-miesiac" aria-label="Następny miesiąc">${ikonaSvg('chevron-right')}</button>
+    </div>
+    <div class="karta">
+      <div class="wiersz-podsumowania"><span>Projektów rozpoczętych</span><span>${projektyMies.length}</span></div>
+      <div class="wiersz-podsumowania wiersz-suma"><span>Wpłacono w tym miesiącu</span><span>${formatujKwote(wplaty)}</span></div>
+    </div>
+    <div class="karta">${listaHtml}</div>
+  `;
+}
+
+function wirePodsumowanie() {
+  const btnPoprzedniRok = document.getElementById('btn-poprzedni-rok');
+  const btnNastepnyRok = document.getElementById('btn-nastepny-rok');
+  if (btnPoprzedniRok) btnPoprzedniRok.addEventListener('click', () => { state.podsumowanieRok--; renderTrescPodsumowania(); });
+  if (btnNastepnyRok) btnNastepnyRok.addEventListener('click', () => { state.podsumowanieRok++; renderTrescPodsumowania(); });
+
+  const btnPoprzedniMiesiac = document.getElementById('btn-poprzedni-miesiac');
+  const btnNastepnyMiesiac = document.getElementById('btn-nastepny-miesiac');
+  if (btnPoprzedniMiesiac) {
+    btnPoprzedniMiesiac.addEventListener('click', () => {
+      state.podsumowanieMiesiac--;
+      if (state.podsumowanieMiesiac < 0) { state.podsumowanieMiesiac = 11; state.podsumowanieRok--; }
+      renderTrescPodsumowania();
+    });
+  }
+  if (btnNastepnyMiesiac) {
+    btnNastepnyMiesiac.addEventListener('click', () => {
+      state.podsumowanieMiesiac++;
+      if (state.podsumowanieMiesiac > 11) { state.podsumowanieMiesiac = 0; state.podsumowanieRok++; }
+      renderTrescPodsumowania();
+    });
+  }
+
+  app.querySelectorAll('.wiersz-miesiaca').forEach((el) => {
+    el.addEventListener('click', () => {
+      state.podsumowanieMiesiac = Number(el.dataset.miesiac);
+      state.podsumowanieTryb = 'miesiac';
+      renderTrescPodsumowania();
+    });
+  });
+
+  app.querySelectorAll('.karta-projekt-podsumowania').forEach((el) => {
+    el.addEventListener('click', () => ustawWidok('kosztorys', el.dataset.id));
   });
 }
 
 // ---------- Widok: Ustawienia ----------
 
+// Które kategorie mają rozwiniętą listę czynności - trzyma się między
+// odświeżeniami renderUstawienia (np. po edycji/usunięciu pozycji), żeby
+// rozwinięcie nie znikało po każdej zmianie.
+const rozwinieteKategorieUstawien = new Set();
+
 async function renderUstawienia() {
-  topbarTitle.textContent = 'Ustawienia';
-  const [kategorie, firma] = await Promise.all([pobierzKategorie(), pobierzDaneFirmy()]);
+  topbarTitle.innerHTML = htmlBanerKompaktowy('settings', 'Ustawienia');
+  const [kategorie, firma, cennik] = await Promise.all([pobierzKategorie(), pobierzDaneFirmy(), pobierzCennik()]);
+  const motyw = pobierzMotyw();
 
   app.innerHTML = `
+    <div class="karta">
+      <h3 class="sekcja-tytul">Wygląd</h3>
+      <div class="przelacznik-grupowania">
+        <button class="btn-segment ${motyw === 'system' ? 'aktywny' : ''}" data-motyw-wybor="system">Systemowy</button>
+        <button class="btn-segment ${motyw === 'jasny' ? 'aktywny' : ''}" data-motyw-wybor="jasny">Jasny</button>
+        <button class="btn-segment ${motyw === 'ciemny' ? 'aktywny' : ''}" data-motyw-wybor="ciemny">Ciemny</button>
+      </div>
+      <button class="btn wtorny maly" id="btn-pokaz-powitanie" style="margin-top:12px;">Pokaż ekran powitalny</button>
+    </div>
+
     <div class="karta">
       <h3 class="sekcja-tytul">Dane firmy (widoczne na wydruku)</h3>
       <div class="pole">
@@ -816,21 +1433,52 @@ async function renderUstawienia() {
         <label for="pole-firma-email">E-mail</label>
         <input id="pole-firma-email" type="text" value="${esc(firma.email)}" />
       </div>
+      <div class="pole">
+        <label>Logo (widoczne na wydruku/PDF)</label>
+        ${firma.logo ? `
+          <div class="podglad-logo">
+            <img src="${firma.logo}" alt="Logo firmy" />
+            <button class="btn wtorny maly niebezpieczny" id="btn-usun-logo" type="button">Usuń logo</button>
+          </div>
+        ` : `
+          <button class="btn wtorny maly" id="btn-wgraj-logo" type="button">Wgraj logo</button>
+        `}
+        <input type="file" id="plik-logo" accept="image/*" hidden />
+      </div>
       <button class="btn" id="btn-zapisz-firme">Zapisz dane firmy</button>
     </div>
 
     <div class="karta">
       <h3 class="sekcja-tytul">Kategorie</h3>
       <div class="lista-kategorii">
-        ${kategorie.map((k) => `
-          <div class="wiersz-kategorii">
-            <span>${ikonaKategorii(k.nazwa)} ${esc(k.nazwa)}</span>
-            <span class="wiersz-kategorii-akcje">
-              <button class="btn wtorny maly" data-toggle-kategoria="${k.id}">${k.ukryta ? 'Pokaż' : 'Ukryj'}</button>
-              <button class="btn wtorny maly niebezpieczny" data-usun-kategorie="${k.id}" title="Usuń na stałe">Usuń</button>
-            </span>
+        ${kategorie.map((k) => {
+          const rozwinieta = rozwinieteKategorieUstawien.has(k.id);
+          const czynnosci = cennik.filter((c) => c.kategoria === k.nazwa);
+          return `
+          <div class="grupa-kategorii">
+            <div class="wiersz-kategorii wiersz-kategorii-klikalny" data-rozwin-kategorie="${k.id}">
+              <span class="wiersz-kategorii-etykieta">${ikonaKategoriiOdznaka(k.nazwa)} ${esc(k.nazwa)} <span class="licznik-czynnosci">(${czynnosci.length})</span></span>
+              <span class="wiersz-kategorii-akcje">
+                <button class="btn wtorny maly" data-toggle-kategoria="${k.id}">${k.ukryta ? 'Pokaż' : 'Ukryj'}</button>
+                <button class="btn wtorny maly niebezpieczny" data-usun-kategorie="${k.id}" title="Usuń na stałe">Usuń</button>
+              </span>
+            </div>
+            ${rozwinieta ? `
+              <div class="lista-czynnosci-kategorii">
+                ${czynnosci.length === 0 ? '<div class="pusty-stan-male">Brak czynności w tej kategorii.</div>' : czynnosci.map((c) => `
+                  <div class="pozycja pozycja-czynnosc" data-edytuj-czynnosc="${c.id}">
+                    <div>
+                      <div class="nazwa">${esc(c.nazwa)}</div>
+                      <div class="szczegoly">${formatujStawke(c.stawka, c.jednostka)}</div>
+                    </div>
+                    <button class="btn-usun" data-usun-czynnosc="${c.id}" aria-label="Usuń" title="Usuń">${ikonaSvg('trash-2')}</button>
+                  </div>
+                `).join('')}
+                <button class="btn wtorny maly" data-dodaj-czynnosc="${k.id}" style="margin-top:8px;">+ Dodaj czynność</button>
+              </div>
+            ` : ''}
           </div>
-        `).join('')}
+        `; }).join('')}
       </div>
       <div class="pole" style="margin-top:14px;">
         <label for="pole-nowa-kategoria">Nowa kategoria</label>
@@ -842,6 +1490,12 @@ async function renderUstawienia() {
     </div>
 
     <div class="karta">
+      <h3 class="sekcja-tytul">Przywróć domyślne</h3>
+      <div class="uwaga">Cofnie własne zmiany w cenniku i kategoriach: zmienione stawki, ukryte/usunięte kategorie oraz dodane własne czynności — wszystko wróci do fabrycznych 14 kategorii i 60 czynności ze stawkami orientacyjnymi. Projekty, kosztorysy, płatności i dane firmy NIE zostaną ruszone. Rozważ najpierw eksport kopii zapasowej poniżej.</div>
+      <button class="btn niebezpieczny" id="btn-reset-cennika">Przywróć domyślny cennik i kategorie</button>
+    </div>
+
+    <div class="karta">
       <h3 class="sekcja-tytul">Kopia zapasowa</h3>
       <div class="uwaga">Wszystkie dane siedzą tylko na tym telefonie. Zgubiony/wymieniony telefon = zero danych bez kopii. Zrób eksport od czasu do czasu i zapisz plik gdzieś poza telefonem (mail do siebie, dysk w chmurze).</div>
       <button class="btn" id="btn-eksportuj-kopie">Eksportuj kopię zapasową</button>
@@ -849,6 +1503,39 @@ async function renderUstawienia() {
       <input type="file" id="plik-importu" accept="application/json" hidden />
     </div>
   `;
+
+  app.querySelectorAll('[data-motyw-wybor]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      zastosujMotyw(btn.dataset.motywWybor);
+      renderUstawienia();
+    });
+  });
+
+  document.getElementById('btn-pokaz-powitanie').addEventListener('click', pokazOnboarding);
+
+  const plikLogo = document.getElementById('plik-logo');
+  const btnWgrajLogo = document.getElementById('btn-wgraj-logo');
+  if (btnWgrajLogo) btnWgrajLogo.addEventListener('click', () => plikLogo.click());
+  const btnUsunLogo = document.getElementById('btn-usun-logo');
+  if (btnUsunLogo) {
+    btnUsunLogo.addEventListener('click', async () => {
+      await zapiszLogoFirmy(null);
+      renderUstawienia();
+    });
+  }
+  plikLogo.addEventListener('change', async () => {
+    const plik = plikLogo.files[0];
+    if (!plik) return;
+    try {
+      const dataUrl = await plikNaDataUrl(plik);
+      await zapiszLogoFirmy(dataUrl);
+      renderUstawienia();
+    } catch (err) {
+      alert(`Nie udało się wgrać logo: ${err.message}`);
+    } finally {
+      plikLogo.value = '';
+    }
+  });
 
   document.getElementById('btn-zapisz-firme').addEventListener('click', async (e) => {
     await zapiszDaneFirmy({
@@ -870,15 +1557,53 @@ async function renderUstawienia() {
   });
 
   app.querySelectorAll('[data-toggle-kategoria]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const kategoria = kategorie.find((k) => k.id === btn.dataset.toggleKategoria);
       await aktualizujKategorie({ ...kategoria, ukryta: !kategoria.ukryta });
       renderUstawienia();
     });
   });
 
+  app.querySelectorAll('[data-rozwin-kategorie]').forEach((wiersz) => {
+    wiersz.addEventListener('click', () => {
+      const id = wiersz.dataset.rozwinKategorie;
+      if (rozwinieteKategorieUstawien.has(id)) {
+        rozwinieteKategorieUstawien.delete(id);
+      } else {
+        rozwinieteKategorieUstawien.add(id);
+      }
+      renderUstawienia();
+    });
+  });
+
+  app.querySelectorAll('[data-edytuj-czynnosc]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const pozycja = cennik.find((c) => c.id === el.dataset.edytujCzynnosc);
+      dialogPozycjaCennika(pozycja, null, renderUstawienia);
+    });
+  });
+
+  app.querySelectorAll('[data-usun-czynnosc]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const usunieta = await usunPozycjeCennika(btn.dataset.usunCzynnosc);
+      renderUstawienia();
+      pokazCofnij(`Usunięto „${usunieta.nazwa}” z cennika.`, () => przywrocPozycjeCennika(usunieta));
+    });
+  });
+
+  app.querySelectorAll('[data-dodaj-czynnosc]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const kategoria = kategorie.find((k) => k.id === btn.dataset.dodajCzynnosc);
+      dialogPozycjaCennika(null, kategoria.nazwa, renderUstawienia);
+    });
+  });
+
   app.querySelectorAll('[data-usun-kategorie]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const kategoria = kategorie.find((k) => k.id === btn.dataset.usunKategorie);
       const [cennik, wszystkiePozycje] = await Promise.all([pobierzCennik(), pobierzWszystkiePozycjeKosztorysu()]);
       const liczbaCennika = cennik.filter((c) => c.kategoria === kategoria.nazwa).length;
@@ -897,6 +1622,16 @@ async function renderUstawienia() {
     });
   });
 
+  document.getElementById('btn-reset-cennika').addEventListener('click', async () => {
+    const tresc = 'Przywrócić domyślny cennik i kategorie?\n\n'
+      + 'Stracisz własne zmiany stawek, ukryte/usunięte kategorie i dodane czynności — wrócą fabryczne 14 kategorii i 60 pozycji cennika.\n\n'
+      + 'Projekty, kosztorysy, płatności i dane firmy zostaną bez zmian. Tej operacji nie da się cofnąć (chyba że masz kopię zapasową).';
+    if (!confirm(tresc)) return;
+    await przywrocDomyslnyCennik();
+    rozwinieteKategorieUstawien.clear();
+    renderUstawienia();
+  });
+
   document.getElementById('btn-eksportuj-kopie').addEventListener('click', async () => {
     const kopia = await eksportujCalaBaze();
     const json = JSON.stringify(kopia, null, 2);
@@ -904,7 +1639,7 @@ async function renderUstawienia() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `o-majster-kopia-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `o-majster-kopia-${dzisiajYMD()}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -944,17 +1679,69 @@ function odmienPozycje(n) {
 
 // ---------- Dialog (generyczny) ----------
 
+// `[data-url]` znaczy element trzymający URL.createObjectURL() (miniatury zdjęć) -
+// trzeba go jawnie zwolnić, inaczej blob zostaje w pamięci mimo usunięcia z DOM.
+function sprzatnijUrleObiektow() {
+  dialog.querySelectorAll('[data-url]').forEach((el) => URL.revokeObjectURL(el.dataset.url));
+}
 function otworzDialog(html) {
+  sprzatnijUrleObiektow();
+  dialog.classList.remove('zamykanie');
   dialog.innerHTML = `<div class="dialog-tresc">${html}</div>`;
-  dialog.showModal();
+  // Dialog może być już otwarty (np. dogranie/skasowanie zdjęcia odświeża
+  // zawartość w miejscu) - showModal() na już otwartym dialogu rzuca wyjątkiem.
+  if (!dialog.open) dialog.showModal();
 }
 function zamknijDialog() {
-  dialog.close();
-  dialog.innerHTML = '';
+  if (dialog.classList.contains('zamykanie')) return;
+  dialog.classList.add('zamykanie');
+  let zrobione = false;
+  const zakoncz = () => {
+    if (zrobione) return;
+    zrobione = true;
+    dialog.close();
+    sprzatnijUrleObiektow();
+    dialog.innerHTML = '';
+    dialog.classList.remove('zamykanie');
+  };
+  // transitionend jako główny sygnał końca animacji, setTimeout jako zabezpieczenie
+  // (np. prefers-reduced-motion skraca czas trwania do prawie zera, ale zdarzenie
+  // wciąż powinno się odpalić - timeout to tylko siatka bezpieczeństwa).
+  dialog.addEventListener('transitionend', zakoncz, { once: true });
+  setTimeout(zakoncz, 200);
 }
 dialog.addEventListener('click', (e) => {
   if (e.target === dialog) zamknijDialog();
 });
+
+// ---------- Toast "Cofnij" (siatka bezpieczeństwa po usunięciu) ----------
+// Usuwanie kasuje z bazy OD RAZU (nie ma "kosza" ani odroczonego kasowania) -
+// to `akcjaCofnij` przywraca dokładnie ten sam rekord z powrotem, gdyby ktoś
+// się rozmyślił w ciągu kilku sekund. Jeden toast na raz - kolejne usunięcie
+// podmienia poprzedni, zamiast je stertować.
+let cofnijTimeout = null;
+function pokazCofnij(tekst, akcjaCofnij) {
+  clearTimeout(cofnijTimeout);
+  let toast = document.getElementById('toast-cofnij');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'toast-cofnij';
+    toast.className = 'toast-cofnij';
+    document.body.appendChild(toast);
+  }
+  toast.innerHTML = `<span>${esc(tekst)}</span><button class="toast-cofnij-btn">Cofnij</button>`;
+  // Restart animacji wjazdu nawet jeśli poprzedni toast był jeszcze widoczny.
+  toast.classList.remove('widoczny');
+  void toast.offsetWidth;
+  toast.classList.add('widoczny');
+  toast.querySelector('.toast-cofnij-btn').addEventListener('click', async () => {
+    clearTimeout(cofnijTimeout);
+    toast.classList.remove('widoczny');
+    await akcjaCofnij();
+    render();
+  });
+  cofnijTimeout = setTimeout(() => toast.classList.remove('widoczny'), 6000);
+}
 
 // ---------- Onboarding (pokazany raz, przy pierwszym uruchomieniu) ----------
 
@@ -966,10 +1753,15 @@ function pokazOnboardingJesliPotrzebny() {
   } catch {
     return; // brak localStorage (tryb prywatny) - nie blokujemy appki onboardingiem
   }
-  if (widziany) return;
-
+  if (!widziany) pokazOnboarding();
+}
+// Wydzielone z pokazOnboardingJesliPotrzebny(), żeby dało się to samo okno
+// odpalić ręcznie z Ustawień (np. żeby komuś pokazać appkę jeszcze raz) -
+// bez tego jedyny sposób ponownego zobaczenia banera to czyszczenie localStorage.
+function pokazOnboarding() {
   otworzDialog(`
-    <h2>Witaj w O!Majster 👋</h2>
+    ${htmlBanerPelny()}
+    ${htmlNotatkaPrywatnosci()}
     <p>Cennik (60 typowych czynności) ma już wpisane <strong>orientacyjne stawki rynkowe</strong> — to punkt startowy, nie Twoje realne ceny. Warto je poprawić na swoje w zakładce <strong>Cennik</strong> (stuknij pozycję, żeby zmienić stawkę na stałe).</p>
     <p>W kosztorysie każdą pozycję też edytujesz stuknięciem — ilość, stawkę, pomieszczenie.</p>
     <div class="dialog-akcje">
@@ -981,6 +1773,84 @@ function pokazOnboardingJesliPotrzebny() {
     zamknijDialog();
   });
 }
+
+// ---------- Powiadomienia (w aplikacji - appka nie wysyła nic na zewnątrz) ----------
+// Sprawdzane raz przy starcie appki: dla każdego aktywnego (nie zakończonego)
+// projektu z ustawioną datą rozpoczęcia liczy różnicę dni do dziś i - jeśli
+// akurat wypada 5, 2 lub 0 dni - tworzy powiadomienie (istniejePowiadomienie
+// pilnuje, żeby nie dublować przy kolejnym otwarciu appki tego samego dnia).
+
+const KOMUNIKATY_STARTOWE = [
+  (nazwa, kwota) => `Dziś ruszasz z "${nazwa}"! Do zarobienia ${formatujKwote(kwota)} 💪`,
+  (nazwa, kwota) => `Dzień dobry, Majster! "${nazwa}" startuje dziś. Na koncie może wylądować ${formatujKwote(kwota)}.`,
+  (nazwa, kwota) => `To dziś: "${nazwa}". Ekipa gotowa, kwota kosztorysu to ${formatujKwote(kwota)} - do dowiezienia.`,
+  (nazwa, kwota) => `Startujemy! "${nazwa}" wchodzi dziś na plac budowy. Cel: ${formatujKwote(kwota)}.`,
+  (nazwa, kwota) => `Nowy dzień, nowa robota: "${nazwa}" rusza dziś. ${formatujKwote(kwota)} do zainkasowania po drodze.`,
+  (nazwa, kwota) => `Pobudka! Dziś zaczynasz "${nazwa}" - ${formatujKwote(kwota)} czeka na koniec prac.`,
+];
+
+async function sprawdzPowiadomieniaProjektow() {
+  let projekty;
+  try {
+    projekty = await pobierzProjekty();
+  } catch {
+    return; // brak dostępu do bazy - nic nie sprawdzamy, appka i tak dalej działa
+  }
+  const dzis = new Date();
+  dzis.setHours(0, 0, 0, 0);
+
+  for (const p of projekty) {
+    if (!p.data_rozpoczecia || statusProjektu(p) === 'zakonczony') continue;
+    const start = new Date(p.data_rozpoczecia + 'T00:00:00');
+    if (Number.isNaN(start.getTime())) continue;
+    const roznicaDni = Math.round((start - dzis) / 86400000);
+
+    if (roznicaDni === 5 && !(await istniejePowiadomienie(p.id, '5dni'))) {
+      await dodajPowiadomienie({ projektId: p.id, typ: '5dni', tresc: `Za 5 dni startuje projekt "${p.nazwa}" - czas dopiąć ostatnie szczegóły.` });
+    } else if (roznicaDni === 2 && !(await istniejePowiadomienie(p.id, '2dni'))) {
+      await dodajPowiadomienie({ projektId: p.id, typ: '2dni', tresc: `Za 2 dni zaczynasz "${p.nazwa}". Przygotuj sprzęt i materiały.` });
+    } else if (roznicaDni === 0 && !(await istniejePowiadomienie(p.id, 'start'))) {
+      const suma = sumaCalkowita(await pobierzPozycjeProjektu(p.id));
+      const komunikat = KOMUNIKATY_STARTOWE[Math.floor(Math.random() * KOMUNIKATY_STARTOWE.length)](p.nazwa, suma);
+      await dodajPowiadomienie({ projektId: p.id, typ: 'start', tresc: komunikat });
+    }
+  }
+  await odswiezOdznakePowiadomien();
+}
+
+async function odswiezOdznakePowiadomien() {
+  const liczba = await pobierzLiczbeNieprzeczytanychPowiadomien();
+  if (liczba > 0) {
+    odznakaPowiadomien.textContent = liczba > 9 ? '9+' : String(liczba);
+    odznakaPowiadomien.hidden = false;
+  } else {
+    odznakaPowiadomien.hidden = true;
+  }
+}
+
+async function pokazPowiadomienia() {
+  const powiadomienia = await pobierzPowiadomienia();
+  otworzDialog(`
+    <h2>Powiadomienia</h2>
+    ${powiadomienia.length === 0
+      ? '<div class="pusty-stan">Brak powiadomień.<br>Pojawią się tu przypomnienia o zbliżających się projektach.</div>'
+      : powiadomienia.map((p) => `
+        <div class="wiersz-powiadomienia ${p.przeczytane ? '' : 'nieprzeczytane'}">
+          <div class="tresc-powiadomienia">${esc(p.tresc)}</div>
+          <div class="data-powiadomienia">${new Date(p.data_utworzenia).toLocaleDateString('pl-PL')}</div>
+        </div>
+      `).join('')}
+    <div class="dialog-akcje">
+      <button class="btn wtorny" id="btn-zamknij-powiadomienia">Zamknij</button>
+    </div>
+  `);
+  document.getElementById('btn-zamknij-powiadomienia').addEventListener('click', zamknijDialog);
+  if (powiadomienia.some((p) => !p.przeczytane)) {
+    await oznaczPowiadomieniaJakoPrzeczytane();
+    await odswiezOdznakePowiadomien();
+  }
+}
+btnPowiadomienia.addEventListener('click', pokazPowiadomienia);
 
 // ---------- Start ----------
 
@@ -1009,5 +1879,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+odswiezKolorPaskaStatusu();
 render();
 pokazOnboardingJesliPotrzebny();
+sprawdzPowiadomieniaProjektow();
