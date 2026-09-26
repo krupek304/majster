@@ -265,6 +265,28 @@ export async function aktualizujKategorie(kategoria) {
   await withStore(db, 'kategorie', 'readwrite', (store) => store.put(kategoria));
 }
 
+// Usuwa kategorię NA STAŁE razem z jej pozycjami w cenniku (decyzja
+// użytkownika 2026-09-26: jedno działanie, bez osobnego kasowania pozycji).
+// Pozycje kosztorysu w już zapisanych projektach NIE są usuwane ani
+// blokujące - zachowują nazwę kategorii jako zwykły tekst i dalej liczą się
+// poprawnie (ostrzeżenie z liczbą pokazuje się w UI przed potwierdzeniem).
+export async function usunKategorieRazemZCennikiem(kategoriaId, nazwaKategorii) {
+  const db = await openDB();
+  const cennikDoUsuniecia = (await getAll(db, 'cennik')).filter((c) => c.kategoria === nazwaKategorii);
+  await withStore(db, 'cennik', 'readwrite', (store) => {
+    cennikDoUsuniecia.forEach((c) => store.delete(c.id));
+  });
+  await withStore(db, 'kategorie', 'readwrite', (store) => store.delete(kategoriaId));
+  return { usunietoZCennika: cennikDoUsuniecia.length };
+}
+
+// Do liczenia, ile ZAPISANYCH pozycji kosztorysu (we wszystkich projektach)
+// użyje danej kategorii - tylko do ostrzeżenia w UI, nic nie zmienia.
+export async function pobierzWszystkiePozycjeKosztorysu() {
+  const db = await openDB();
+  return getAll(db, 'pozycje');
+}
+
 // ---------- Cennik ----------
 
 export async function pobierzCennik() {

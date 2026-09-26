@@ -1,6 +1,6 @@
 {
-  "name": "Majster - kosztorys remontu",
-  "short_name": "Majster",
+  "name": "O!Majster - kosztorys remontu",
+  "short_name": "O!Majster",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

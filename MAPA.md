@@ -1,4 +1,4 @@
-# Mapa kodu — Majster
+# Mapa kodu — O!Majster
 
 Spis funkcji z numerami linii. Odświeżać po większych zmianach.
 

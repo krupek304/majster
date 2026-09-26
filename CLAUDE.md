@@ -1,4 +1,4 @@
-# Majster — zasady pracy
+# O!Majster — zasady pracy
 
 Ten plik czytasz automatycznie na starcie. Zastosuj go, zanim cokolwiek zrobisz.
 

@@ -1,8 +1,9 @@
 import {
   pobierzProjekty, dodajProjekt, usunProjekt,
-  pobierzKategorie, dodajKategorie, aktualizujKategorie,
+  pobierzKategorie, dodajKategorie, aktualizujKategorie, usunKategorieRazemZCennikiem,
   pobierzCennik, dodajPozycjeCennika, aktualizujPozycjeCennika, usunPozycjeCennika,
   pobierzPozycjeProjektu, dodajPozycjeKosztorysu, aktualizujPozycjeKosztorysu, usunPozycjeKosztorysu,
+  pobierzWszystkiePozycjeKosztorysu,
   pobierzPlatnosciProjektu, dodajPlatnosc, usunPlatnosc,
   pobierzDaneFirmy, zapiszDaneFirmy,
 } from './db.js';
@@ -106,7 +107,7 @@ async function render() {
 // ---------- Widok: Projekty ----------
 
 async function renderProjekty() {
-  topbarTitle.textContent = 'Majster';
+  topbarTitle.textContent = 'O!Majster';
   const projekty = await pobierzProjekty();
   const sumyProjektow = await Promise.all(
     projekty.map(async (p) => sumaCalkowita(await pobierzPozycjeProjektu(p.id)))
@@ -673,7 +674,10 @@ async function renderUstawienia() {
         ${kategorie.map((k) => `
           <div class="wiersz-kategorii">
             <span>${ikonaKategorii(k.nazwa)} ${esc(k.nazwa)}</span>
-            <button class="btn wtorny maly" data-toggle-kategoria="${k.id}">${k.ukryta ? 'Pokaż' : 'Ukryj'}</button>
+            <span class="wiersz-kategorii-akcje">
+              <button class="btn wtorny maly" data-toggle-kategoria="${k.id}">${k.ukryta ? 'Pokaż' : 'Ukryj'}</button>
+              <button class="btn wtorny maly niebezpieczny" data-usun-kategorie="${k.id}" title="Usuń na stałe">Usuń</button>
+            </span>
           </div>
         `).join('')}
       </div>
@@ -713,6 +717,34 @@ async function renderUstawienia() {
       renderUstawienia();
     });
   });
+
+  app.querySelectorAll('[data-usun-kategorie]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const kategoria = kategorie.find((k) => k.id === btn.dataset.usunKategorie);
+      const [cennik, wszystkiePozycje] = await Promise.all([pobierzCennik(), pobierzWszystkiePozycjeKosztorysu()]);
+      const liczbaCennika = cennik.filter((c) => c.kategoria === kategoria.nazwa).length;
+      const liczbaWKosztorysach = wszystkiePozycje.filter((p) => p.kategoria === kategoria.nazwa).length;
+
+      let tresc = `Usunąć kategorię "${kategoria.nazwa}" na stałe?`;
+      if (liczbaCennika > 0) tresc += `\n\nUsunie też ${liczbaCennika} ${odmienPozycje(liczbaCennika)} w cenniku.`;
+      if (liczbaWKosztorysach > 0) {
+        const fraza = liczbaWKosztorysach === 1 ? 'zapisanej pozycji' : 'zapisanych pozycjach';
+        tresc += `\n\nKategoria jest użyta w ${liczbaWKosztorysach} ${fraza} kosztorysu w Twoich projektach — te ZOSTANĄ, kategoria zapisze się przy nich jako zwykły tekst i nadal będą poprawnie liczone.`;
+      }
+      if (!confirm(tresc)) return;
+
+      await usunKategorieRazemZCennikiem(kategoria.id, kategoria.nazwa);
+      renderUstawienia();
+    });
+  });
+}
+
+function odmienPozycje(n) {
+  if (n === 1) return 'pozycję';
+  const ostatniaCyfra = n % 10;
+  const ostatnieDwie = n % 100;
+  if (ostatniaCyfra >= 2 && ostatniaCyfra <= 4 && !(ostatnieDwie >= 12 && ostatnieDwie <= 14)) return 'pozycje';
+  return 'pozycji';
 }
 
 // ---------- Dialog (generyczny) ----------

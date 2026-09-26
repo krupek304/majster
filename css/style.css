@@ -261,6 +261,7 @@ body {
   font-size: 14px;
 }
 .wiersz-kategorii:last-child { border-bottom: none; }
+.wiersz-kategorii-akcje { display: flex; gap: 6px; flex-shrink: 0; }
 
 dialog {
   border: none;

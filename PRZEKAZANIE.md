@@ -1,4 +1,10 @@
-# Przekazanie — Majster
+# Przekazanie — O!Majster
+
+**Nazwa appki zmieniona z "Majster" na "O!Majster" (2026-09-26, na życzenie
+użytkownika)** — widoczne w tytule strony, nagłówku, ikonie na ekranie
+głównym. Techniczne identyfikatory (nazwa bazy IndexedDB `majster-db`,
+zmienne, nazwy funkcji) zostały bez zmian — zmiana nazwy nie kasuje ani nie
+migruje żadnych danych, to czysto kosmetyczna zmiana brandingu.
 
 ## Stan projektu
 
@@ -11,6 +17,11 @@ zero kosztów, wszystko lokalnie w IndexedDB na urządzeniu.
 (GitHub Pages, repozytorium publiczne `krupek304/majster`, branch `main`,
 HTTPS wymuszony przez GitHub). To jest adres do otwarcia na iPhonie i
 dodania do ekranu głównego (Safari → Udostępnij → Dodaj do ekranu głównego).
+
+**W trakcie zmiany na `https://krupek304.github.io/o-majster/`** — użytkownik
+poprosił też o zmianę adresu, nie tylko nazwy wyświetlanej. Wymaga
+przemianowania repozytorium na GitHubie (czynność tylko dla użytkownika,
+opisana w kroku poniżej) — do potwierdzenia w dalszej części tej sesji.
 
 ## Model danych (patrz MAPA.md → js/db.js)
 
