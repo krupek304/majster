@@ -45,7 +45,21 @@ zróżnicowane, żeby mieć jedną sensowną cenę, do wypełnienia przez fachow
 - `eksportujCSV(projekt, pozycje)` — [app.js:297](js/app.js#L297)
 - `renderCennik()` — [app.js:322](js/app.js#L322) — ekran "domyślne stawki"; stuknięcie wiersza = edycja stawki na stałe
 - `dialogPozycjaCennika(edytowanaPozycja?)` — [app.js:360](js/app.js#L360) — jeden formularz do dodawania I edycji pozycji cennika
-- `otworzDialog(html)` / `zamknijDialog()` — [app.js:412](js/app.js#L412) — generyczny wrapper na `<dialog>`
+- `otworzDialog(html)` / `zamknijDialog()` — generyczny wrapper na `<dialog>`
+- `JEDNOSTKI` — zamknięty zestaw jednostek (`szt., m2, mb, pkt, kpl., usł.`) używany w obu formularzach zamiast wolnego tekstu
+- `htmlSelectJednostka(id, wybrana)` — `<select>` jednostki; jeśli istniejąca pozycja ma jednostkę spoza listy (starsze dane), dopisuje ją jako dodatkową opcję zamiast po cichu podmienić na "szt."
+
+## Auto-aktualizacja PWA (app.js, sekcja "Start")
+
+Standalone PWA na iOS rzadko sama sprawdza aktualizacje po zmianie na
+serwerze — stąd zgłoszony przez użytkownika przypadek "otworzyłem stronę,
+a cennika nie ma" (telefon pokazywał wersję sprzed dodania cennika).
+Naprawione: nasłuch na `navigator.serviceWorker.controllerchange` —
+gdy nowy service worker przejmie kontrolę nad już otwartą stroną (czyli
+realna aktualizacja, nie pierwsza instalacja — rozróżnione flagą
+`mielKontrolerNaStarcie`), strona przeładowuje się **sama, raz**. Dzięki
+temu kolejne aktualizacje kodu dotrą do telefonu bez ręcznego usuwania
+i dodawania ikony na nowo.
 
 ## Inne pliki
 

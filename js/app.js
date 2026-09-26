@@ -13,10 +13,28 @@ const tabButtons = document.querySelectorAll('.tab-btn');
 
 const state = { widok: 'projekty', projektId: null };
 
+// Zamknięty zestaw jednostek - te same, których używają domyślne pozycje
+// cennika w db.js. Zamiast wolnego tekstu (łatwo o literówkę typu "m2"/"m²"/"metr")
+// wybiera się z listy, żeby sumy i grupowanie zawsze się zgadzały.
+const JEDNOSTKI = ['szt.', 'm2', 'mb', 'pkt', 'kpl.', 'usł.'];
+
 function esc(str) {
   const d = document.createElement('div');
   d.textContent = str ?? '';
   return d.innerHTML;
+}
+
+function htmlSelectJednostka(id, wybrana) {
+  // Jeśli istniejąca pozycja ma jednostkę spoza standardowej listy (np. wpisaną
+  // ręcznie przed wprowadzeniem dropdowna), dopisz ją jako dodatkową opcję -
+  // żeby zapisanie formularza bez zmian nie podmieniło jej po cichu na "szt.".
+  const opcje = JEDNOSTKI.includes(wybrana) || !wybrana ? JEDNOSTKI : [wybrana, ...JEDNOSTKI];
+  const domyslna = wybrana && opcje.includes(wybrana) ? wybrana : JEDNOSTKI[0];
+  return `
+    <select id="${id}">
+      ${opcje.map((j) => `<option value="${esc(j)}" ${j === domyslna ? 'selected' : ''}>${esc(j)}</option>`).join('')}
+    </select>
+  `;
 }
 
 // ---------- Nawigacja ----------
@@ -211,7 +229,7 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
     </div>
     <div class="pole">
       <label for="pole-jednostka">Jednostka</label>
-      <input id="pole-jednostka" type="text" placeholder="m2, mb, szt., kpl." value="${esc(edytowanaPozycja?.jednostka ?? 'szt.')}" />
+      ${htmlSelectJednostka('pole-jednostka', edytowanaPozycja?.jednostka ?? 'szt.')}
     </div>
     <div class="pole">
       <label for="pole-stawka">Stawka za jednostkę (zł)</label>
@@ -374,7 +392,7 @@ async function dialogPozycjaCennika(edytowanaPozycja = null) {
     </div>
     <div class="pole">
       <label for="pole-jednostka">Jednostka</label>
-      <input id="pole-jednostka" type="text" placeholder="m2, mb, szt., kpl." value="${esc(edytowanaPozycja?.jednostka ?? 'm2')}" />
+      ${htmlSelectJednostka('pole-jednostka', edytowanaPozycja?.jednostka ?? 'm2')}
     </div>
     <div class="pole">
       <label for="pole-stawka">Stawka (zł za jednostkę)</label>
@@ -424,8 +442,27 @@ dialog.addEventListener('click', (e) => {
 // ---------- Start ----------
 
 if ('serviceWorker' in navigator) {
+  // Czy strona była już kontrolowana przez jakiś service worker PRZED tym
+  // ładowaniem - odróżnia "świeża instalacja" (controller null -> pierwszy SW,
+  // przeładowanie niepotrzebne) od "aktualizacja" (stary SW -> nowy SW,
+  // przeładowanie konieczne, bo już wczytany app.js jest przestarzały).
+  const mielKontrolerNaStarcie = !!navigator.serviceWorker.controller;
+
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch((err) => console.error('SW rejestracja nieudana:', err));
+  });
+
+  // Standalone PWA na iOS rzadko odświeża się samo po aktualizacji na
+  // serwerze, więc bez tego telefon mógłby pokazywać stary kod w nieskończoność.
+  // `odswiezonoJuz` zabezpiecza przed pętlą przeładowań.
+  let odswiezonoJuz = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (odswiezonoJuz || !mielKontrolerNaStarcie) {
+      odswiezonoJuz = true;
+      return;
+    }
+    odswiezonoJuz = true;
+    location.reload();
   });
 }
 

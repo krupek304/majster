@@ -223,6 +223,43 @@ z jednostką i stawką, store `podkategorie` usunięty (baza v3).
 - Po wdrożeniu (commit z tej rundy, cache `majster-v4`) wyczyściłem własne
   dane testowe na produkcji tak jak poprzednio.
 
+### Runda 3 (2026-09-26, później): zgłoszony bug "pusty cennik" + dropdown jednostki
+
+**Diagnoza (przed naprawą, zgodnie z zasadą "najpierw ustal przyczynę"):**
+użytkownik zgłosił, że po otwarciu strony cennik jest pusty. Zapytałem, czy
+otwierał link wcześniej tego dnia — potwierdził. To wskazuje na jedną
+przyczynę: **standalone PWA na iOS nie sprawdza samo aktualizacji** równie
+agresywnie jak zwykła karta przeglądarki. Telefon zapamiętał wersję sprzed
+dodania cennika (pierwsze otwarcie linku, które mu podałem na starcie tej
+sesji) i Service Worker (cache-first) serwował ją dalej mimo kilku moich
+aktualizacji na serwerze — dokładnie ten sam mechanizm, na który sam
+trafiałem podczas testowania (musiałem robić `preview_stop`+`preview_start`
+albo zamykać kartę, żeby zobaczyć nowy kod).
+
+**Naprawa:** nasłuch na `serviceWorker.controllerchange` w `app.js` —
+gdy nowy SW przejmuje kontrolę nad już otwartą stroną, strona przeładowuje
+się sama, raz. Zweryfikowane **dwustronnie**, żeby nie wprowadzić nowego
+błędu (auto-reload w pętli albo niepotrzebny reload przy pierwszej instalacji):
+- Świeża instalacja (`controller` był `null` na starcie) → nawigacja,
+  2 sekundy oczekiwania → **brak przeładowania**, appka działa normalnie
+  (sprawdzone: dane z otwartego wcześniej dialogu przetrwały bez zakłóceń).
+- Symulacja prawdziwej aktualizacji: podmieniłem `CACHE_NAZWA` na inną
+  wartość (jak przy realnym wdrożeniu), nawigacja → **cache automatycznie
+  zmienił się z `majster-v5` na nową wersję po jednej nawigacji**, bez
+  żadnej ręcznej interwencji — dokładnie to, czego brakowało.
+
+**Druga zmiana z tej rundy:** pole "Jednostka" w obu formularzach (pozycja
+kosztorysu i pozycja cennika) zamienione z wolnego tekstu na `<select>`
+z zestawem `szt., m2, mb, pkt, kpl., usł.` — te same 6, których używają
+domyślne pozycje cennika. Zweryfikowane: wybór z cennika "Montaż listew
+przypodłogowych" autofilluje select na wartość **mb** (widoczna jako
+zaznaczona opcja, nie tylko tekst), edycja istniejącej pozycji poprawnie
+odtwarza zapisaną jednostkę w dropdownie (**"pkt"** dla pozycji zapisanej
+z tą jednostką). Zabezpieczenie przed cichą utratą danych: jeśli jakaś
+starsza pozycja miałaby jednostkę spoza tej szóstki (wpisaną ręcznie przed
+zmianą), dopisuje się ją jako dodatkową opcję zamiast po cichu zamienić na
+"szt." przy zapisie.
+
 ## Czego NIE udało się sprawdzić
 
 - **Rzeczywiste działanie na fizycznym iPhone** — testowałem w Browser
@@ -248,6 +285,14 @@ z jednostką i stawką, store `podkategorie` usunięty (baza v3).
   kolegi-fachowca** — to są uśrednione wartości ze źródeł internetowych
   (patrz sekcja wyżej), nie ceny sprawdzone "w terenie". Kolega powinien
   przejrzeć cennik przy pierwszym użyciu i poprawić stawki na swoje.
+- **Czy auto-przeładowanie po aktualizacji faktycznie zadziała na
+  konkretnym telefonie użytkownika (iOS Safari, PWA dodana do ekranu
+  głównego przed dodaniem tej poprawki)** — zweryfikowałem mechanizm w
+  Browser pane (symulacja), nie na jego urządzeniu. Jego obecna, już
+  zainstalowana ikona wciąż ma STARY kod (sprzed tej poprawki) — sama
+  poprawka nie pomoże retroaktywnie, dopóki nie dotrze tam choć raz. Stąd
+  instrukcja "wymuś teraz" w mojej odpowiedzi na czacie, niezależna od tego
+  mechanizmu.
 
 ## Co zostaje otwarte
 
