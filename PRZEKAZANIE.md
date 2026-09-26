@@ -76,6 +76,22 @@ dawała **przemieszane kategorie** zamiast kolejności etapów remontu —
 poprawione przez budowanie grup w kolejności `kategorie` (już poprawnie
 posortowanych), nie w kolejności napotkania w płaskiej liście podkategorii.
 
+**Druga, poważniejsza pułapka — realny bug migracji, nie tylko testowy
+artefakt:** logika "seeduj kategorie tylko gdy store jest pusty" nie
+dotarła do bazy, która już miała stare 12 kategorii z wcześniejszej wersji
+(dokładnie taki stan miała moja własna testowa baza na produkcyjnym
+`krupek304.github.io` po pierwszym smoke-teście). Efekt: dropdown "Typowa
+czynność" pokazywał tylko 2 z 14 grup (te, których nazwa przypadkiem
+pokrywała się ze starą listą — "Podłogi" i "Stolarka drzwiowa i okienna").
+**Naprawione** przez zmianę logiki na uzupełnianie brakujących kategorii
+PO NAZWIE (nie tylko przy pustej bazie) — bezpieczne, addytywne, nic nie
+kasuje. Zweryfikowane liczbami: symulacja starej bazy (12 starych kategorii,
+0 podkategorii) → po otwarciu przez nowy kod: **24 kategorie** (12 starych
++ 14 nowych − 2 nazwy wspólne) **/ 60 podkategorii**, dropdown "Typowa
+czynność" poprawnie pokazuje **14 grup / 60 opcji**. Dla realnego docelowego
+użytkownika (czysty telefon, nigdy nie uruchamiał appki) to bez znaczenia —
+jego baza i tak wystartuje pusta i dostanie czyste 14 kategorii od razu.
+
 Test end-to-end w przeglądarce (Browser pane, viewport mobilny 375×812):
 - Dodano 2 pozycje do cennika, potem do kosztorysu (20 m² × 45 zł,
   60 m² × 12,50 zł) → **przed: 0 zł / po: 1650,00 zł** (900 + 750,

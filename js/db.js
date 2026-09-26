@@ -144,22 +144,36 @@ export function openDB() {
 }
 
 async function zapewnijDaneStartowe(db) {
-  const kategorie = await getAll(db, 'kategorie');
-  if (kategorie.length === 0) {
+  // Uzupełnia brakujące domyślne kategorie PO NAZWIE, nie tylko przy pustej
+  // bazie - żeby aktualizacja listy kategorii (np. ta z 2026-09-26) dotarła
+  // też do baz zasianych wcześniejszą wersją, bez kasowania własnych kategorii
+  // użytkownika ani duplikowania tych, które już tam są.
+  const istniejaceKategorie = await getAll(db, 'kategorie');
+  const istniejaceNazwy = new Set(istniejaceKategorie.map((k) => k.nazwa));
+  const brakujaceKategorie = DOMYSLNE_KATEGORIE.filter((nazwa) => !istniejaceNazwy.has(nazwa));
+  if (brakujaceKategorie.length > 0) {
+    let kolejnosc = istniejaceKategorie.length;
     await withStore(db, 'kategorie', 'readwrite', (store) => {
-      DOMYSLNE_KATEGORIE.forEach((nazwa, i) => {
-        store.put({ id: cryptoId(), nazwa, kolejnosc: i });
+      brakujaceKategorie.forEach((nazwa) => {
+        store.put({ id: cryptoId(), nazwa, kolejnosc: kolejnosc++ });
       });
     });
   }
 
-  const podkategorie = await getAll(db, 'podkategorie');
-  if (podkategorie.length === 0) {
+  const istniejacePodkategorie = await getAll(db, 'podkategorie');
+  const istniejaceParyKatNazwa = new Set(istniejacePodkategorie.map((p) => p.kategoria + '\u0001' + p.nazwa));
+  const brakujacePodkategorie = [];
+  Object.entries(DOMYSLNE_KATEGORIE_Z_PODKATEGORIAMI).forEach(([kategoria, lista]) => {
+    lista.forEach((nazwa, i) => {
+      if (!istniejaceParyKatNazwa.has(kategoria + '\u0001' + nazwa)) {
+        brakujacePodkategorie.push({ kategoria, nazwa, kolejnosc: i });
+      }
+    });
+  });
+  if (brakujacePodkategorie.length > 0) {
     await withStore(db, 'podkategorie', 'readwrite', (store) => {
-      Object.entries(DOMYSLNE_KATEGORIE_Z_PODKATEGORIAMI).forEach(([kategoria, lista]) => {
-        lista.forEach((nazwa, i) => {
-          store.put({ id: cryptoId(), kategoria, nazwa, kolejnosc: i });
-        });
+      brakujacePodkategorie.forEach(({ kategoria, nazwa, kolejnosc }) => {
+        store.put({ id: cryptoId(), kategoria, nazwa, kolejnosc });
       });
     });
   }
