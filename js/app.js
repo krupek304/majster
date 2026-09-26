@@ -1,6 +1,6 @@
 import {
   pobierzProjekty, dodajProjekt, usunProjekt,
-  pobierzKategorie, dodajKategorie,
+  pobierzKategorie, dodajKategorie, pobierzPodkategorie,
   pobierzCennik, dodajPozycjeCennika, aktualizujPozycjeCennika, usunPozycjeCennika,
   pobierzPozycjeProjektu, dodajPozycjeKosztorysu, aktualizujPozycjeKosztorysu, usunPozycjeKosztorysu,
 } from './db.js';
@@ -173,7 +173,7 @@ function grupujPoKategorii(pozycje) {
 }
 
 async function dialogNowaPozycja(projektId) {
-  const [kategorie, cennik] = await Promise.all([pobierzKategorie(), pobierzCennik()]);
+  const [kategorie, cennik, podkategorie] = await Promise.all([pobierzKategorie(), pobierzCennik(), pobierzPodkategorie()]);
 
   otworzDialog(`
     <h2>Nowa pozycja</h2>
@@ -186,6 +186,7 @@ async function dialogNowaPozycja(projektId) {
         </select>
       </div>
     ` : ''}
+    ${htmlSelectPodkategorie('pole-podkategoria', kategorie, podkategorie)}
     <div class="pole">
       <label for="pole-nazwa">Nazwa czynności</label>
       <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" />
@@ -225,6 +226,7 @@ async function dialogNowaPozycja(projektId) {
   const poleStawka = document.getElementById('pole-stawka');
   const podgladKwoty = document.getElementById('podglad-kwoty');
   const poleZCennika = document.getElementById('pole-z-cennika');
+  const polePodkategoria = document.getElementById('pole-podkategoria');
 
   function przeliczPodglad() {
     podgladKwoty.textContent = formatujKwote(kwotaPozycji(poleIlosc.value, poleStawka.value));
@@ -242,6 +244,13 @@ async function dialogNowaPozycja(projektId) {
       przeliczPodglad();
     });
   }
+
+  polePodkategoria.addEventListener('change', () => {
+    const wybrana = podkategorie.find((p) => p.id === polePodkategoria.value);
+    if (!wybrana) return;
+    poleNazwa.value = wybrana.nazwa;
+    poleKategoria.value = wybrana.kategoria;
+  });
 
   document.getElementById('btn-anuluj').addEventListener('click', zamknijDialog);
   document.getElementById('btn-zapisz').addEventListener('click', async () => {
@@ -315,9 +324,10 @@ async function renderCennik() {
 }
 
 async function dialogNowaPozycjaCennika() {
-  const kategorie = await pobierzKategorie();
+  const [kategorie, podkategorie] = await Promise.all([pobierzKategorie(), pobierzPodkategorie()]);
   otworzDialog(`
     <h2>Nowa czynność w cenniku</h2>
+    ${htmlSelectPodkategorie('pole-podkategoria', kategorie, podkategorie)}
     <div class="pole">
       <label for="pole-nazwa">Nazwa czynności</label>
       <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" />
@@ -341,19 +351,49 @@ async function dialogNowaPozycjaCennika() {
       <button class="btn" id="btn-zapisz">Zapisz</button>
     </div>
   `);
+  const poleNazwa = document.getElementById('pole-nazwa');
+  const poleKategoria = document.getElementById('pole-kategoria');
+  document.getElementById('pole-podkategoria').addEventListener('change', (e) => {
+    const wybrana = podkategorie.find((p) => p.id === e.target.value);
+    if (!wybrana) return;
+    poleNazwa.value = wybrana.nazwa;
+    poleKategoria.value = wybrana.kategoria;
+  });
   document.getElementById('btn-anuluj').addEventListener('click', zamknijDialog);
   document.getElementById('btn-zapisz').addEventListener('click', async () => {
-    const nazwa = document.getElementById('pole-nazwa').value.trim();
+    const nazwa = poleNazwa.value.trim();
     if (!nazwa) return;
     await dodajPozycjeCennika({
       nazwa,
-      kategoria: document.getElementById('pole-kategoria').value,
+      kategoria: poleKategoria.value,
       jednostka: document.getElementById('pole-jednostka').value || 'szt.',
       stawka: document.getElementById('pole-stawka').value,
     });
     zamknijDialog();
     renderCennik();
   });
+}
+
+function htmlSelectPodkategorie(id, kategorie, podkategorie) {
+  // Grupy w kolejności kategorii (etapy remontu po kolei), nie w kolejności ID.
+  const optgroups = kategorie.map((k) => {
+    const lista = podkategorie.filter((p) => p.kategoria === k.nazwa);
+    if (lista.length === 0) return '';
+    return `
+      <optgroup label="${esc(k.nazwa)}">
+        ${lista.map((p) => `<option value="${p.id}">${esc(p.nazwa)}</option>`).join('')}
+      </optgroup>
+    `;
+  }).join('');
+  return `
+    <div class="pole">
+      <label for="${id}">Typowa czynność (opcjonalnie)</label>
+      <select id="${id}">
+        <option value="">— wybierz albo wpisz własną nazwę niżej —</option>
+        ${optgroups}
+      </select>
+    </div>
+  `;
 }
 
 // ---------- Dialog (generyczny) ----------

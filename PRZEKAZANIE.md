@@ -19,8 +19,15 @@ dodania do ekranu głównego (Safari → Udostępnij → Dodaj do ekranu główn
   → kwota = ilość × stawka (nigdy nie zgadywana, zawsze wpisana ręcznie).
 - **Cennik** = zapisane pary nazwa+kategoria+jednostka+stawka, do szybkiego
   wyboru przy dodawaniu pozycji (auto-wypełnia formularz, można nadpisać).
-- **Kategorie** = 12 domyślnych (Prace rozbiórkowe, Elektryka, Hydraulika,
-  Malowanie, Płytki, itd.), edytowalne.
+- **Kategorie** = 14 domyślnych, w pełnej kolejności etapów wykończenia
+  mieszkania (od "Przygotowanie i planowanie" po "Prace dodatkowe i
+  opcjonalne"), edytowalne. Lista podana przez użytkownika 2026-09-26.
+- **Podkategorie** = 60 typowych czynności (po ok. 3-6 na kategorię),
+  osobny store `podkategorie`, tylko nazwa + kategoria — **bez jednostek
+  i stawek**, bo tego nikt nie podał, a zgadywanie cen jest zabronione
+  zasadami projektu. W formularzu dodawania pozycji/cennika wybór
+  podkategorii tylko auto-wypełnia kategorię i nazwę; jednostkę i stawkę
+  fachowiec zawsze wpisuje sam.
 - Pole `dodane_przez` w każdej pozycji = ID użytkownika (dziś zawsze `"ja"`,
   jeden zaszyty rekord w store `uzytkownicy`). To jest **jedyny** element
   pod przyszłe konta — zgodnie z ustaleniem, że teraz jest jeden użytkownik,
@@ -51,6 +58,23 @@ dodania do ekranu głównego (Safari → Udostępnij → Dodaj do ekranu główn
 Test logiki (`node js/calc.test.mjs`): **10/10 OK** — kwoty pozycji,
 sumy per kategoria, suma całkowita, przypadki brzegowe (pusta lista,
 nieprawidłowe dane wejściowe → 0 zamiast NaN).
+
+Kategorie i podkategorie (2026-09-26, lista podana przez użytkownika):
+**przed: 12 kategorii / 0 podkategorii** (poprzedni generyczny model) →
+**po: 14 kategorii / 60 podkategorii**, policzone programowo z danych
+źródłowych w `db.js` (nie z pamięci) i zweryfikowane po zasiewie w
+świeżej bazie IndexedDB: `pobierzKategorie()` zwraca 14 pozycji we
+właściwej kolejności etapów, dropdown "Typowa czynność" w obu
+formularzach (kosztorys i cennik) pokazuje **14 grup / 60 opcji**.
+Wybór podkategorii "Montaż armatury łazienkowej..." → auto-wypełnienie
+kategorii "Biały montaż i osprzęt" + nazwy, poprawnie (sprawdzone przez
+odczyt wartości pól po evencie `change`).
+
+Pułapka po drodze: pierwsza wersja grupowania (`Map` budowana z kolejności
+elementów w tablicy `podkategorie` posortowanej globalnie po `kolejnosc`)
+dawała **przemieszane kategorie** zamiast kolejności etapów remontu —
+poprawione przez budowanie grup w kolejności `kategorie` (już poprawnie
+posortowanych), nie w kolejności napotkania w płaskiej liście podkategorii.
 
 Test end-to-end w przeglądarce (Browser pane, viewport mobilny 375×812):
 - Dodano 2 pozycje do cennika, potem do kosztorysu (20 m² × 45 zł,

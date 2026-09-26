@@ -1,5 +1,5 @@
 // Service worker - cache app shell, żeby appka działała offline po dodaniu do ekranu głównego.
-const CACHE_NAZWA = 'majster-v1';
+const CACHE_NAZWA = 'majster-v2';
 const PLIKI_DO_CACHE = [
   './',
   './index.html',

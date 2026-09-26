@@ -117,6 +117,16 @@ zielone, bezwartościowe wyniki. Zawsze sprawdź na starcie, czy dane w ogóle s
   (np. OpenCV 5 zwraca z `HoughLinesP` tablicę `(N, 4)` zamiast `(N, 1, 4)`).
   Gdy kod wywala się na rozpakowaniu wyniku — sprawdź wersję, nie przepisuj
   logiki.
+- **Podgląd w Browser pane (`preview_start`) cache'uje pliki statyczne przez
+  jakieś proxy pomiędzy przeglądarką a `python -m http.server`** — po edycji
+  JS/CSS potrafi serwować starą wersję nawet z `fetch(..., {cache:'no-store'})`
+  i po ręcznym czyszczeniu Cache API/Service Workera w stronie. Objaw: kod na
+  dysku jest poprawny (`grep`/`Read` to potwierdza), ale zachowanie w
+  przeglądarce odpowiada starej wersji. Obejście: `preview_stop` +
+  `preview_start` od nowa, albo dopisanie unikalnego query stringa do URL
+  zasobu (`/js/app.js?bust=<timestamp>`) żeby ominąć cache po kluczu URL.
+  To problem samego narzędzia deweloperskiego, nie realnego hostingu
+  (GitHub Pages nie ma tego problemu).
 - Heredoc w Bashu przy długich plikach potrafi się urwać. Do pisania plików
   używaj `Write`, nie `cat << EOF`.
 

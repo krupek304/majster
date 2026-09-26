@@ -3,23 +3,103 @@
 // dziś zawsze jeden, domyślny użytkownik, ale schemat jest gotowy na dodanie kolejnych kont później.
 
 const DB_NAME = 'majster-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const DOMYSLNY_UZYTKOWNIK_ID = 'ja';
 
-const DOMYSLNE_KATEGORIE = [
-  'Prace rozbiórkowe',
-  'Instalacja elektryczna',
-  'Instalacja wodno-kanalizacyjna',
-  'Instalacja grzewcza / wentylacja',
-  'Tynki i gładzie',
-  'Malowanie',
-  'Podłogi',
-  'Płytki i okładziny',
-  'Stolarka drzwiowa i okienna',
-  'Zabudowa meblowa / montaż',
-  'Wywóz gruzu / utylizacja',
-  'Inne',
-];
+// Pełna kolejność etapów wykończenia mieszkania (od przygotowania po odbiór),
+// każda kategoria z typowymi podkategoriami (bez jednostek/stawek - te wpisuje
+// zawsze fachowiec ręcznie, nigdy nie zgadujemy cen).
+const DOMYSLNE_KATEGORIE_Z_PODKATEGORIAMI = {
+  'Przygotowanie i planowanie': [
+    'Opracowanie projektu wnętrza (układ ścian, punkty instalacyjne, dobór materiałów)',
+    'Sporządzenie harmonogramu i kosztorysu prac',
+    'Zakup i dostawa materiałów budowlanych oraz wykończeniowych',
+    'Zabezpieczenie mieszkania przed pyłem i uszkodzeniami (folie, kartony)',
+  ],
+  'Prace rozbiórkowe i konstrukcyjne': [
+    'Wyburzanie ścianek działowych lub ich fragmentów',
+    'Demontaż starych instalacji, armatury, ościeżnic, podłóg, płytek',
+    'Stawianie nowych ścianek działowych (bloczki, płyty gipsowo-kartonowe)',
+    'Wykucie bruzd pod instalacje elektryczne i hydrauliczne',
+  ],
+  'Instalacje wewnętrzne (stan surowy)': [
+    'Rozprowadzenie instalacji elektrycznej (przewody, puszki, rozdzielnia)',
+    'Rozprowadzenie instalacji hydraulicznej (woda, kanalizacja, przyłącza do AGD)',
+    'Montaż instalacji wentylacyjnej lub rekuperacji (opcjonalnie)',
+    'Montaż instalacji ogrzewania (grzejniki, ogrzewanie podłogowe)',
+    'Montaż stelaży podtynkowych (WC, umywalki)',
+  ],
+  'Prace tynkarskie i wylewki': [
+    'Tynkowanie ścian i sufitów (tynki cementowo-wapienne lub gipsowe)',
+    'Osadzanie ościeżnic drzwiowych (futryn) w otworach',
+    'Wykonanie wylewek podłogowych (tradycyjne lub samopoziomujące)',
+    'Gruntowanie podłoży przed dalszymi pracami',
+  ],
+  'Zabudowy z płyt gipsowo-kartonowych (GK)': [
+    'Budowa sufitów podwieszanych z oświetleniem punktowym',
+    'Zabudowa instalacji (np. rury, skrzynki)',
+    'Wykonanie wnęk, ścianek ozdobnych, obudów kominków',
+    'Szpachlowanie połączeń płyt GK',
+  ],
+  'Prace glazurnicze i terakota': [
+    'Hydroizolacja łazienki, kuchni i innych stref mokrych (folia w płynie, mata uszczelniająca)',
+    'Układanie płytek ceramicznych na ścianach (łazienka, kuchnia, przedpokój)',
+    'Układanie płytek podłogowych (terakota, gres)',
+    'Wykonanie obróbek, listew przypodłogowych z płytek, narożników',
+    'Impregnacja i czyszczenie płytek po ułożeniu',
+  ],
+  'Gładzie i przygotowanie ścian do malowania': [
+    'Nakładanie gładzi gipsowych na ściany i sufity',
+    'Szlifowanie gładzi do uzyskania idealnej gładkości',
+    'Gruntowanie ścian przed malowaniem',
+    'Pierwsze malowanie (warstwa podkładowa, tzw. "białe malowanie")',
+  ],
+  'Podłogi': [
+    'Układanie paneli podłogowych',
+    'Montaż podłóg drewnianych (deski, parkiet, mozaika)',
+    'Układanie wykładzin dywanowych lub winylowych',
+    'Montaż listew przypodłogowych (cokołów)',
+    'Cyklinowanie i lakierowanie podłóg drewnianych (w razie potrzeby)',
+  ],
+  'Stolarka drzwiowa i okienna': [
+    'Montaż drzwi wewnętrznych (skrzydła, zawiasy, klamki)',
+    'Regulacja drzwi i zamków',
+    'Montaż parapetów wewnętrznych',
+    'Ewentualna wymiana lub regulacja okien (jeśli w zakresie)',
+  ],
+  'Malowanie i wykończenie ścian': [
+    'Malowanie końcowe ścian i sufitów (2-3 warstwy farby)',
+    'Klejenie tapet (alternatywa dla malowania)',
+    'Montaż listew ozdobnych, gzymsów, cokołów dekoracyjnych',
+  ],
+  'Biały montaż i osprzęt': [
+    'Montaż armatury łazienkowej (baterie, prysznice, deszczownice)',
+    'Montaż ceramiki sanitarnej (umywalki, WC, bidety, wanny, kabiny)',
+    'Montaż oświetlenia (lampy, plafony, taśmy LED)',
+    'Montaż osprzętu elektrycznego (gniazdka, włączniki, ramki)',
+    'Montaż grzejników i głowic termostatycznych',
+    'Montaż mebli łazienkowych i kuchennych (szafki, blaty)',
+  ],
+  'Kuchnia i AGD': [
+    'Montaż zabudowy kuchennej (szafki górne i dolne)',
+    'Podłączenie zlewu i baterii kuchennej',
+    'Montaż i podłączenie sprzętu AGD (lodówka, piekarnik, płyta, zmywarka, okap)',
+  ],
+  'Sprzątanie i odbiór': [
+    'Usunięcie zabezpieczeń (folii, kartonów)',
+    'Dokładne sprzątanie mieszkania po wszystkich pracach',
+    'Wywóz gruzu i odpadów budowlanych',
+    'Odbiór techniczny z inwestorem (sprawdzenie jakości prac)',
+  ],
+  'Prace dodatkowe i opcjonalne': [
+    'Montaż klimatyzacji',
+    'Montaż rolet, żaluzji, firan i zasłon',
+    'Montaż luster, półek, wieszaków, akcesoriów łazienkowych',
+    'Dekory ścienne (obrazy, naklejki, fototapety)',
+    'Montaż systemów Smart Home (czujniki, sterowanie oświetleniem)',
+  ],
+};
+const DOMYSLNE_KATEGORIE = Object.keys(DOMYSLNE_KATEGORIE_Z_PODKATEGORIAMI);
 
 let dbPromise = null;
 
@@ -44,6 +124,10 @@ export function openDB() {
       if (!db.objectStoreNames.contains('kategorie')) {
         db.createObjectStore('kategorie', { keyPath: 'id' });
       }
+      if (!db.objectStoreNames.contains('podkategorie')) {
+        const store = db.createObjectStore('podkategorie', { keyPath: 'id' });
+        store.createIndex('kategoria', 'kategoria', { unique: false });
+      }
       if (!db.objectStoreNames.contains('uzytkownicy')) {
         db.createObjectStore('uzytkownicy', { keyPath: 'id' });
       }
@@ -65,6 +149,17 @@ async function zapewnijDaneStartowe(db) {
     await withStore(db, 'kategorie', 'readwrite', (store) => {
       DOMYSLNE_KATEGORIE.forEach((nazwa, i) => {
         store.put({ id: cryptoId(), nazwa, kolejnosc: i });
+      });
+    });
+  }
+
+  const podkategorie = await getAll(db, 'podkategorie');
+  if (podkategorie.length === 0) {
+    await withStore(db, 'podkategorie', 'readwrite', (store) => {
+      Object.entries(DOMYSLNE_KATEGORIE_Z_PODKATEGORIAMI).forEach(([kategoria, lista]) => {
+        lista.forEach((nazwa, i) => {
+          store.put({ id: cryptoId(), kategoria, nazwa, kolejnosc: i });
+        });
       });
     });
   }
@@ -146,6 +241,14 @@ export async function dodajKategorie(nazwa) {
   const kategoria = { id: cryptoId(), nazwa: nazwa.trim(), kolejnosc: istniejace.length };
   await withStore(db, 'kategorie', 'readwrite', (store) => store.put(kategoria));
   return kategoria;
+}
+
+// ---------- Podkategorie (typowe czynności w ramach kategorii, bez cen) ----------
+
+export async function pobierzPodkategorie() {
+  const db = await openDB();
+  const podkategorie = await getAll(db, 'podkategorie');
+  return podkategorie.sort((a, b) => a.kolejnosc - b.kolejnosc);
 }
 
 // ---------- Cennik ----------
