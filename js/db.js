@@ -223,10 +223,43 @@ export async function dodajProjekt({ nazwa, klient }) {
     id: cryptoId(),
     nazwa: nazwa.trim(),
     klient: (klient || '').trim(),
+    status: 'wycena',
     data_utworzenia: new Date().toISOString(),
   };
   await withStore(db, 'projekty', 'readwrite', (store) => store.put(projekt));
   return projekt;
+}
+
+export async function aktualizujProjekt(projekt) {
+  const db = await openDB();
+  await withStore(db, 'projekty', 'readwrite', (store) => store.put(projekt));
+}
+
+// Kopiuje projekt razem z jego pozycjami kosztorysu (nowe id, nowa data) -
+// NIE kopiuje płatności (to historia konkretnego zlecenia, nie szablonu).
+export async function duplikujProjekt(projektId, nowaNazwa) {
+  const db = await openDB();
+  const projekty = await getAll(db, 'projekty');
+  const oryginal = projekty.find((p) => p.id === projektId);
+  if (!oryginal) throw new Error('Projekt do skopiowania nie istnieje');
+
+  const nowyProjekt = {
+    id: cryptoId(),
+    nazwa: nowaNazwa.trim(),
+    klient: oryginal.klient,
+    status: 'wycena',
+    data_utworzenia: new Date().toISOString(),
+  };
+  const pozycje = await getAll(db, 'pozycje', 'projekt_id', projektId);
+  const teraz = new Date().toISOString();
+
+  await withStore(db, 'projekty', 'readwrite', (store) => store.put(nowyProjekt));
+  await withStore(db, 'pozycje', 'readwrite', (store) => {
+    pozycje.forEach((p) => {
+      store.put({ ...p, id: cryptoId(), projekt_id: nowyProjekt.id, data: teraz });
+    });
+  });
+  return { projekt: nowyProjekt, liczbaPozycji: pozycje.length };
 }
 
 export async function usunProjekt(projektId) {
@@ -285,6 +318,154 @@ export async function usunKategorieRazemZCennikiem(kategoriaId, nazwaKategorii) 
 export async function pobierzWszystkiePozycjeKosztorysu() {
   const db = await openDB();
   return getAll(db, 'pozycje');
+}
+
+// ---------- Szablony pomieszczeń (gotowe zestawy typowych czynności) ----------
+// Odwołują się do NAZW pozycji cennika (nie ID), więc działają nawet jeśli
+// użytkownik dodał domyślny cennik przy innej instalacji - jeśli jakiejś
+// nazwy nie ma (np. usunięta ręcznie), ta jedna pozycja jest po prostu
+// pomijana, reszta szablonu i tak się doda.
+export const SZABLONY_POMIESZCZEN = {
+  'Łazienka': [
+    'Hydroizolacja łazienki, kuchni i innych stref mokrych (folia w płynie, mata uszczelniająca)',
+    'Układanie płytek ceramicznych na ścianach (łazienka, kuchnia, przedpokój)',
+    'Układanie płytek podłogowych (terakota, gres)',
+    'Montaż stelaży podtynkowych (WC, umywalki)',
+    'Montaż armatury łazienkowej (baterie, prysznice, deszczownice)',
+    'Montaż ceramiki sanitarnej (umywalki, WC, bidety, wanny, kabiny)',
+  ],
+  'Kuchnia': [
+    'Układanie płytek ceramicznych na ścianach (łazienka, kuchnia, przedpokój)',
+    'Układanie płytek podłogowych (terakota, gres)',
+    'Montaż zabudowy kuchennej (szafki górne i dolne)',
+    'Podłączenie zlewu i baterii kuchennej',
+    'Montaż i podłączenie sprzętu AGD (lodówka, piekarnik, płyta, zmywarka, okap)',
+    'Montaż osprzętu elektrycznego (gniazdka, włączniki, ramki)',
+  ],
+  'Pokój / Salon': [
+    'Nakładanie gładzi gipsowych na ściany i sufity',
+    'Malowanie końcowe ścian i sufitów (2-3 warstwy farby)',
+    'Układanie paneli podłogowych',
+    'Montaż listew przypodłogowych (cokołów)',
+    'Montaż osprzętu elektrycznego (gniazdka, włączniki, ramki)',
+    'Montaż oświetlenia (lampy, plafony, taśmy LED)',
+  ],
+  'Przedpokój / Hol': [
+    'Nakładanie gładzi gipsowych na ściany i sufity',
+    'Malowanie końcowe ścian i sufitów (2-3 warstwy farby)',
+    'Układanie płytek podłogowych (terakota, gres)',
+    'Montaż listew przypodłogowych (cokołów)',
+  ],
+};
+
+export function pobierzNazwySzablonowPomieszczen() {
+  return Object.keys(SZABLONY_POMIESZCZEN);
+}
+
+// Zamienia nazwy czynności z szablonu na aktualne pozycje cennika (z
+// aktualną, ewentualnie już poprawioną przez fachowca stawką).
+export async function pobierzPozycjeSzablonu(nazwaSzablonu) {
+  const cennik = await pobierzCennik();
+  const nazwyCzynnosci = SZABLONY_POMIESZCZEN[nazwaSzablonu] || [];
+  return nazwyCzynnosci
+    .map((nazwa) => cennik.find((c) => c.nazwa === nazwa))
+    .filter(Boolean);
+}
+
+// Dodaje od razu kilka pozycji kosztorysu (np. cały szablon pomieszczenia)
+// w jednej transakcji. Ilość zawsze startuje od 1 - fachowiec poprawia
+// realną ilość dla każdej pozycji z osobna po dodaniu (edycja jednym stuknięciem).
+export async function dodajWielePozycjiKosztorysu(projektId, listaPozycjiCennika, pomieszczenie) {
+  const db = await openDB();
+  const teraz = new Date().toISOString();
+  const zapisane = listaPozycjiCennika.map((p) => ({
+    id: cryptoId(),
+    projekt_id: projektId,
+    nazwa: p.nazwa,
+    kategoria: p.kategoria,
+    jednostka: p.jednostka,
+    ilosc: 1,
+    stawka: p.stawka,
+    pomieszczenie: (pomieszczenie || '').trim(),
+    dodane_przez: DOMYSLNY_UZYTKOWNIK_ID,
+    data: teraz,
+  }));
+  await withStore(db, 'pozycje', 'readwrite', (store) => {
+    zapisane.forEach((p) => store.put(p));
+  });
+  return zapisane;
+}
+
+// ---------- Kopia zapasowa (eksport/import całej bazy) ----------
+// Import jest ADDYTYWNY (put po id) - nadpisuje rekordy o tym samym id,
+// dopisuje nowe, ale NIE kasuje niczego, czego nie ma w pliku. Bezpieczny
+// domyślny wybór: przywrócenie kopii na czystym telefonie działa tak samo
+// jak "doklejenie" starszej kopii do już używanej instalacji.
+const WSZYSTKIE_STORY_KOPII = ['projekty', 'cennik', 'pozycje', 'kategorie', 'uzytkownicy', 'platnosci', 'ustawienia'];
+
+export async function eksportujCalaBaze() {
+  const db = await openDB();
+  const dane = {};
+  for (const nazwaStore of WSZYSTKIE_STORY_KOPII) {
+    dane[nazwaStore] = await getAll(db, nazwaStore);
+  }
+  return { aplikacja: 'O!Majster', wersjaBazy: DB_VERSION, eksportowano: new Date().toISOString(), dane };
+}
+
+export async function importujCalaBaze(kopia) {
+  if (!kopia || typeof kopia !== 'object' || !kopia.dane) {
+    throw new Error('To nie wygląda na plik kopii zapasowej O!Majster.');
+  }
+  const db = await openDB();
+  const wynik = {};
+
+  // Kategorie i cennik: dopasuj po NAZWIE (kategoria: nazwa; cennik:
+  // kategoria+nazwa) i zaktualizuj istniejący rekord zamiast tworzyć
+  // duplikat z innym ID. Inaczej przywrócenie kopii na już zasianej (świeżej)
+  // instalacji podwoiłoby domyślne 60 pozycji cennika / 14 kategorii - a przy
+  // okazji poprawnie przywraca stawki, które fachowiec sam sobie zmienił.
+  const importowaneKategorie = Array.isArray(kopia.dane.kategorie) ? kopia.dane.kategorie : [];
+  if (importowaneKategorie.length > 0) {
+    const istniejace = await getAll(db, 'kategorie');
+    const mapaPoNazwie = new Map(istniejace.map((k) => [k.nazwa, k]));
+    await withStore(db, 'kategorie', 'readwrite', (store) => {
+      importowaneKategorie.forEach((k) => {
+        const juzIstnieje = mapaPoNazwie.get(k.nazwa);
+        store.put(juzIstnieje ? { ...juzIstnieje, ukryta: k.ukryta, kolejnosc: k.kolejnosc } : k);
+      });
+    });
+  }
+  wynik.kategorie = importowaneKategorie.length;
+
+  const importowanyCennik = Array.isArray(kopia.dane.cennik) ? kopia.dane.cennik : [];
+  if (importowanyCennik.length > 0) {
+    const istniejace = await getAll(db, 'cennik');
+    const mapaPoKluczu = new Map(istniejace.map((c) => [c.kategoria + '\u0001' + c.nazwa, c]));
+    await withStore(db, 'cennik', 'readwrite', (store) => {
+      importowanyCennik.forEach((c) => {
+        const juzIstnieje = mapaPoKluczu.get(c.kategoria + '\u0001' + c.nazwa);
+        store.put(juzIstnieje ? { ...juzIstnieje, jednostka: c.jednostka, stawka: c.stawka } : c);
+      });
+    });
+  }
+  wynik.cennik = importowanyCennik.length;
+
+  // Reszta (projekty, pozycje, płatności, ustawienia): dane specyficzne dla
+  // użytkownika, bez domyślnego seeda z którym mogłyby kolidować - put po ID
+  // wprost, żeby zachować powiązania (pozycje.projekt_id -> projekty.id z tej
+  // samej kopii).
+  for (const nazwaStore of ['projekty', 'pozycje', 'platnosci', 'ustawienia']) {
+    const rekordy = Array.isArray(kopia.dane[nazwaStore]) ? kopia.dane[nazwaStore] : [];
+    if (rekordy.length === 0) {
+      wynik[nazwaStore] = 0;
+      continue;
+    }
+    await withStore(db, nazwaStore, 'readwrite', (store) => {
+      rekordy.forEach((r) => store.put(r));
+    });
+    wynik[nazwaStore] = rekordy.length;
+  }
+  return wynik;
 }
 
 // ---------- Cennik ----------

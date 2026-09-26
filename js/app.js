@@ -1,11 +1,13 @@
 import {
-  pobierzProjekty, dodajProjekt, usunProjekt,
+  pobierzProjekty, dodajProjekt, usunProjekt, aktualizujProjekt, duplikujProjekt,
   pobierzKategorie, dodajKategorie, aktualizujKategorie, usunKategorieRazemZCennikiem,
   pobierzCennik, dodajPozycjeCennika, aktualizujPozycjeCennika, usunPozycjeCennika,
   pobierzPozycjeProjektu, dodajPozycjeKosztorysu, aktualizujPozycjeKosztorysu, usunPozycjeKosztorysu,
-  pobierzWszystkiePozycjeKosztorysu,
+  pobierzWszystkiePozycjeKosztorysu, dodajWielePozycjiKosztorysu,
+  pobierzNazwySzablonowPomieszczen, pobierzPozycjeSzablonu,
   pobierzPlatnosciProjektu, dodajPlatnosc, usunPlatnosc,
   pobierzDaneFirmy, zapiszDaneFirmy,
+  eksportujCalaBaze, importujCalaBaze,
 } from './db.js';
 import { kwotaPozycji, sumyKategorii, sumyPolem, sumaCalkowita, sumaPlatnosci, formatujKwote } from './calc.js';
 
@@ -50,6 +52,37 @@ function ikonaKategorii(nazwa) {
 
 // Paleta do paska podziału kosztów - cykliczna, wystarcza na więcej niż 14 kategorii.
 const PALETA_WYKRESU = ['#ea580c', '#0ea5e9', '#22c55e', '#a855f7', '#f43f5e', '#eab308', '#14b8a6', '#6366f1', '#f97316', '#84cc16', '#ec4899', '#06b6d4', '#8b5cf6', '#64748b'];
+
+// Statusy projektu - czysto organizacyjne, nie wpływają na liczenie sumy.
+const STATUSY = {
+  wycena: { etykieta: 'Wycena', kolor: '#94a3b8' },
+  w_trakcie: { etykieta: 'W trakcie', kolor: '#0ea5e9' },
+  zakonczony: { etykieta: 'Zakończony', kolor: '#22c55e' },
+};
+function statusProjektu(projekt) {
+  return STATUSY[projekt.status] ? projekt.status : 'wycena';
+}
+
+// Zapamiętywanie ostatnio wpisanej ilości dla danej pozycji cennika - czysto
+// lokalna wygoda urządzenia (nie dane biznesowe), stąd localStorage a nie baza.
+const KLUCZ_OSTATNICH_ILOSCI = 'o-majster-ostatnie-ilosci';
+function pobierzOstatniaIlosc(cennikId) {
+  try {
+    const mapa = JSON.parse(localStorage.getItem(KLUCZ_OSTATNICH_ILOSCI) || '{}');
+    return mapa[cennikId];
+  } catch {
+    return undefined;
+  }
+}
+function zapamietajIlosc(cennikId, ilosc) {
+  try {
+    const mapa = JSON.parse(localStorage.getItem(KLUCZ_OSTATNICH_ILOSCI) || '{}');
+    mapa[cennikId] = ilosc;
+    localStorage.setItem(KLUCZ_OSTATNICH_ILOSCI, JSON.stringify(mapa));
+  } catch {
+    // localStorage niedostępny (np. tryb prywatny) - pomijamy, to tylko wygoda
+  }
+}
 
 function esc(str) {
   const d = document.createElement('div');
@@ -120,6 +153,7 @@ async function renderProjekty() {
         <div>
           <div class="nazwa">${esc(p.nazwa)}</div>
           <div class="klient">${esc(p.klient) || 'Bez klienta'} &middot; ${new Date(p.data_utworzenia).toLocaleDateString('pl-PL')}</div>
+          <span class="odznaka-statusu" style="background:${STATUSY[statusProjektu(p)].kolor}">${STATUSY[statusProjektu(p)].etykieta}</span>
         </div>
         <div class="suma">${formatujKwote(sumyProjektow[i])}</div>
       </div>
@@ -211,6 +245,9 @@ async function renderKosztorys(projektId) {
       </div>
     </div>
     ${projekt.klient ? `<div class="uwaga">Klient: ${esc(projekt.klient)}</div>` : ''}
+    <div class="przelacznik-grupowania">
+      ${Object.entries(STATUSY).map(([klucz, s]) => `<button class="btn-segment ${statusProjektu(projekt) === klucz ? 'aktywny' : ''}" data-status="${klucz}">${s.etykieta}</button>`).join('')}
+    </div>
     ${pozycje.length > 0 ? `
       <div class="przelacznik-grupowania">
         <button class="btn-segment ${state.grupowanie === 'kategoria' ? 'aktywny' : ''}" data-grupuj="kategoria">Wg kategorii</button>
@@ -218,7 +255,10 @@ async function renderKosztorys(projektId) {
       </div>
     ` : ''}
     <div class="karta">${grupyHtml}</div>
-    <button class="btn" id="btn-dodaj-pozycje">+ Dodaj pozycję</button>
+    <div class="akcje-dodawania">
+      <button class="btn" id="btn-dodaj-pozycje">+ Dodaj pozycję</button>
+      <button class="btn wtorny" id="btn-dodaj-szablon">+ Typowy zestaw</button>
+    </div>
     ${htmlPasekPodzialu(pozycje)}
     ${htmlPlatnosci(platnosci, suma)}
     <div class="podsumowanie">
@@ -228,17 +268,32 @@ async function renderKosztorys(projektId) {
     <div class="akcje-eksportu">
       <button class="btn wtorny" id="btn-drukuj">Drukuj / PDF</button>
       <button class="btn wtorny" id="btn-csv">Eksport CSV</button>
+      <button class="btn wtorny" id="btn-udostepnij" hidden>Udostępnij</button>
+      <button class="btn wtorny" id="btn-duplikuj">Duplikuj projekt</button>
       <button class="btn wtorny niebezpieczny" id="btn-usun-projekt">Usuń projekt</button>
     </div>
   `;
 
   document.getElementById('btn-dodaj-pozycje').addEventListener('click', () => dialogPozycja(projektId));
+  document.getElementById('btn-dodaj-szablon').addEventListener('click', () => dialogSzablonPomieszczenia(projektId));
   document.getElementById('btn-drukuj').addEventListener('click', () => window.print());
   document.getElementById('btn-csv').addEventListener('click', () => eksportujCSV(projekt, pozycje));
+  document.getElementById('btn-duplikuj').addEventListener('click', () => dialogDuplikujProjekt(projekt));
   document.getElementById('btn-usun-projekt').addEventListener('click', async () => {
     if (!confirm(`Usunąć projekt "${projekt.nazwa}" wraz ze wszystkimi pozycjami?`)) return;
     await usunProjekt(projektId);
     ustawWidok('projekty');
+  });
+  const btnUdostepnij = document.getElementById('btn-udostepnij');
+  if (navigator.share) {
+    btnUdostepnij.hidden = false;
+    btnUdostepnij.addEventListener('click', () => udostepnijKosztorys(projekt, pozycje, suma));
+  }
+  app.querySelectorAll('[data-status]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await aktualizujProjekt({ ...projekt, status: btn.dataset.status });
+      renderKosztorys(projektId);
+    });
   });
   app.querySelectorAll('[data-grupuj]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -451,6 +506,8 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
       poleKategoria.value = wybrany.kategoria;
       poleJednostka.value = wybrany.jednostka;
       poleStawka.value = wybrany.stawka;
+      const zapamietanaIlosc = pobierzOstatniaIlosc(wybrany.id);
+      if (zapamietanaIlosc !== undefined) poleIlosc.value = zapamietanaIlosc;
       przeliczPodglad();
     });
   }
@@ -470,6 +527,9 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
       ilosc: poleIlosc.value,
       stawka: poleStawka.value,
     };
+    if (poleZCennika && poleZCennika.value) {
+      zapamietajIlosc(poleZCennika.value, Number(dane.ilosc));
+    }
     if (edycja) {
       await aktualizujPozycjeKosztorysu({ ...edytowanaPozycja, ...dane, ilosc: Number(dane.ilosc), stawka: Number(dane.stawka), pomieszczenie: dane.pomieszczenie.trim() });
     } else {
@@ -537,6 +597,97 @@ function eksportujCSV(projekt, pozycje) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+function dialogDuplikujProjekt(projekt) {
+  otworzDialog(`
+    <h2>Duplikuj projekt</h2>
+    <div class="pole">
+      <label for="pole-nazwa">Nazwa nowego projektu</label>
+      <input id="pole-nazwa" type="text" value="Kopia - ${esc(projekt.nazwa)}" />
+    </div>
+    <div class="uwaga">Skopiuje wszystkie pozycje kosztorysu. Płatności NIE są kopiowane - to historia konkretnego zlecenia.</div>
+    <div class="dialog-akcje">
+      <button class="btn wtorny" id="btn-anuluj">Anuluj</button>
+      <button class="btn" id="btn-zapisz">Duplikuj</button>
+    </div>
+  `);
+  document.getElementById('btn-anuluj').addEventListener('click', zamknijDialog);
+  document.getElementById('btn-zapisz').addEventListener('click', async () => {
+    const nazwa = document.getElementById('pole-nazwa').value.trim();
+    if (!nazwa) return;
+    const { projekt: nowyProjekt } = await duplikujProjekt(projekt.id, nazwa);
+    zamknijDialog();
+    ustawWidok('kosztorys', nowyProjekt.id);
+  });
+}
+
+async function udostepnijKosztorys(projekt, pozycje, suma) {
+  const linie = pozycje.map((p) => `- ${p.nazwa}: ${p.ilosc} ${p.jednostka} x ${formatujStawke(p.stawka, p.jednostka)} = ${p.stawka ? formatujKwote(kwotaPozycji(p.ilosc, p.stawka)) : 'do ustalenia'}`);
+  const tekst = `Kosztorys: ${projekt.nazwa}${projekt.klient ? `\nKlient: ${projekt.klient}` : ''}\n\n${linie.join('\n')}\n\nRazem: ${formatujKwote(suma)}`;
+  try {
+    await navigator.share({ title: `Kosztorys - ${projekt.nazwa}`, text: tekst });
+  } catch (err) {
+    if (err.name !== 'AbortError') console.error('Udostępnianie nieudane:', err);
+  }
+}
+
+async function dialogSzablonPomieszczenia(projektId) {
+  const nazwySzablonow = pobierzNazwySzablonowPomieszczen();
+  otworzDialog(`
+    <h2>Dodaj typowy zestaw</h2>
+    <div class="pole">
+      <label for="pole-szablon">Typ pomieszczenia</label>
+      <select id="pole-szablon">
+        ${nazwySzablonow.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="pole">
+      <label for="pole-pomieszczenie">Nazwa pomieszczenia (do tagu)</label>
+      <input id="pole-pomieszczenie" type="text" value="${esc(nazwySzablonow[0])}" />
+    </div>
+    <div class="pole">
+      <label>Czynności do dodania (odznacz to, czego nie potrzebujesz)</label>
+      <div id="lista-szablonu" class="lista-checkboxow"></div>
+    </div>
+    <div class="uwaga">Każda pozycja doda się z ilością 1 - popraw realną ilość osobno dla każdej po dodaniu (stuknij pozycję w kosztorysie).</div>
+    <div class="dialog-akcje">
+      <button class="btn wtorny" id="btn-anuluj">Anuluj</button>
+      <button class="btn" id="btn-zapisz">Dodaj zaznaczone</button>
+    </div>
+  `);
+
+  const poleSzablon = document.getElementById('pole-szablon');
+  const polePomieszczenie = document.getElementById('pole-pomieszczenie');
+  const listaSzablonu = document.getElementById('lista-szablonu');
+  let aktualnePozycjeSzablonu = [];
+
+  async function odswiezListe() {
+    aktualnePozycjeSzablonu = await pobierzPozycjeSzablonu(poleSzablon.value);
+    listaSzablonu.innerHTML = aktualnePozycjeSzablonu.length === 0
+      ? '<div class="pusty-stan">Brak pozycji w cenniku dla tego szablonu (usunięte ręcznie?).</div>'
+      : aktualnePozycjeSzablonu.map((c, i) => `
+        <label class="wiersz-checkboxu">
+          <input type="checkbox" data-indeks="${i}" checked />
+          <span>${esc(c.nazwa)} <span class="szczegoly">(${formatujStawke(c.stawka, c.jednostka)})</span></span>
+        </label>
+      `).join('');
+  }
+  await odswiezListe();
+  poleSzablon.addEventListener('change', () => {
+    polePomieszczenie.value = poleSzablon.value;
+    odswiezListe();
+  });
+
+  document.getElementById('btn-anuluj').addEventListener('click', zamknijDialog);
+  document.getElementById('btn-zapisz').addEventListener('click', async () => {
+    const zaznaczone = [...listaSzablonu.querySelectorAll('input[type="checkbox"]:checked')]
+      .map((cb) => aktualnePozycjeSzablonu[Number(cb.dataset.indeks)]);
+    if (zaznaczone.length === 0) return;
+    await dodajWielePozycjiKosztorysu(projektId, zaznaczone, polePomieszczenie.value);
+    zamknijDialog();
+    renderKosztorys(projektId);
+  });
 }
 
 // ---------- Widok: Cennik ----------
@@ -689,6 +840,14 @@ async function renderUstawienia() {
         </div>
       </div>
     </div>
+
+    <div class="karta">
+      <h3 class="sekcja-tytul">Kopia zapasowa</h3>
+      <div class="uwaga">Wszystkie dane siedzą tylko na tym telefonie. Zgubiony/wymieniony telefon = zero danych bez kopii. Zrób eksport od czasu do czasu i zapisz plik gdzieś poza telefonem (mail do siebie, dysk w chmurze).</div>
+      <button class="btn" id="btn-eksportuj-kopie">Eksportuj kopię zapasową</button>
+      <button class="btn wtorny" id="btn-importuj-kopie" style="margin-top:8px;">Importuj kopię zapasową</button>
+      <input type="file" id="plik-importu" accept="application/json" hidden />
+    </div>
   `;
 
   document.getElementById('btn-zapisz-firme').addEventListener('click', async (e) => {
@@ -737,6 +896,42 @@ async function renderUstawienia() {
       renderUstawienia();
     });
   });
+
+  document.getElementById('btn-eksportuj-kopie').addEventListener('click', async () => {
+    const kopia = await eksportujCalaBaze();
+    const json = JSON.stringify(kopia, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `o-majster-kopia-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  const plikImportu = document.getElementById('plik-importu');
+  document.getElementById('btn-importuj-kopie').addEventListener('click', () => plikImportu.click());
+  plikImportu.addEventListener('change', async () => {
+    const plik = plikImportu.files[0];
+    if (!plik) return;
+    try {
+      const tekst = await plik.text();
+      const kopia = JSON.parse(tekst);
+      const wynik = await importujCalaBaze(kopia);
+      const podsumowanie = Object.entries(wynik)
+        .filter(([, liczba]) => liczba > 0)
+        .map(([nazwa, liczba]) => `${nazwa}: ${liczba}`)
+        .join(', ');
+      alert(`Zaimportowano:\n${podsumowanie || 'plik nie zawierał żadnych danych'}`);
+      renderUstawienia();
+    } catch (err) {
+      alert(`Nie udało się zaimportować pliku: ${err.message}`);
+    } finally {
+      plikImportu.value = '';
+    }
+  });
 }
 
 function odmienPozycje(n) {
@@ -760,6 +955,32 @@ function zamknijDialog() {
 dialog.addEventListener('click', (e) => {
   if (e.target === dialog) zamknijDialog();
 });
+
+// ---------- Onboarding (pokazany raz, przy pierwszym uruchomieniu) ----------
+
+const KLUCZ_ONBOARDINGU = 'o-majster-onboarding-widziany';
+function pokazOnboardingJesliPotrzebny() {
+  let widziany = true;
+  try {
+    widziany = localStorage.getItem(KLUCZ_ONBOARDINGU) === '1';
+  } catch {
+    return; // brak localStorage (tryb prywatny) - nie blokujemy appki onboardingiem
+  }
+  if (widziany) return;
+
+  otworzDialog(`
+    <h2>Witaj w O!Majster 👋</h2>
+    <p>Cennik (60 typowych czynności) ma już wpisane <strong>orientacyjne stawki rynkowe</strong> — to punkt startowy, nie Twoje realne ceny. Warto je poprawić na swoje w zakładce <strong>Cennik</strong> (stuknij pozycję, żeby zmienić stawkę na stałe).</p>
+    <p>W kosztorysie każdą pozycję też edytujesz stuknięciem — ilość, stawkę, pomieszczenie.</p>
+    <div class="dialog-akcje">
+      <button class="btn" id="btn-rozumiem">Rozumiem, zaczynam</button>
+    </div>
+  `);
+  document.getElementById('btn-rozumiem').addEventListener('click', () => {
+    try { localStorage.setItem(KLUCZ_ONBOARDINGU, '1'); } catch { /* trudno, pokaże się znowu */ }
+    zamknijDialog();
+  });
+}
 
 // ---------- Start ----------
 
@@ -789,3 +1010,4 @@ if ('serviceWorker' in navigator) {
 }
 
 render();
+pokazOnboardingJesliPotrzebny();

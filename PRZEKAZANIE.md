@@ -346,6 +346,55 @@ Zweryfikowane liczbami, po kolei:
   płatności (osierocone rekordy w bazie) — dodane w tej samej rundzie,
   zanim trafiło na produkcję.
 
+### Runda 5 (2026-09-26, wieczór): 7 usprawnień funkcjonalności i prostoty
+
+Użytkownik dostał ode mnie 7 propozycji (4 funkcjonalność, 3 prostota) i
+poprosił o wdrożenie wszystkich. Zrobione: eksport/import kopii zapasowej,
+duplikowanie projektu, udostępnianie systemowe, status projektu, szablony
+całych pomieszczeń, onboarding, zapamiętywanie ostatniej ilości.
+
+- **Status projektu**: nowy projekt startuje jako "Wycena" → zmiana na
+  "W trakcie" → odznaka na liście projektów pokazuje **"W trakcie"**
+  (zgodna z wybranym stanem, sprawdzone po przełączeniu widoku).
+- **Duplikowanie projektu**: oryginał z 6 pozycjami (suma **1484,00 zł**)
+  → duplikat **"Kopia - ..."** ma dokładnie **1484,00 zł** (te same pozycje,
+  nowe ID, bez płatności — zgodnie z decyzją, że to nie jest historia
+  zlecenia tylko szablon do wypełnienia od nowa).
+- **Szablon pomieszczenia**: szablon "Łazienka" pokazał **6 checkboxów**
+  (zgodnie z definicją), odznaczyłem 1 → dodało się **5 pozycji**, każda
+  z tagiem "📍 Łazienka" i ilością startową 1.
+- **Zapamiętywanie ilości**: dodanie pozycji z cennika z ilością **17** →
+  przy kolejnym wyborze TEJ SAMEJ pozycji cennika pole ilości samo
+  wypełniło się na **17** (localStorage, nie baza — to lokalna wygoda).
+- **Eksport/import kopii zapasowej — najważniejszy test tej rundy.**
+  Pierwsza wersja importu robiła `put` po ID wprost dla WSZYSTKICH store'ów,
+  co przy przywracaniu na już zasianej (świeżej) instalacji **podwoiłoby**
+  60 domyślnych pozycji cennika i 14 kategorii (różne ID = różne rekordy,
+  te same nazwy). Znalezione i naprawione PRZED wdrożeniem: kategorie/cennik
+  są teraz dopasowywane po nazwie i aktualizowane, nie duplikowane.
+  Zweryfikowane liczbami na dwóch "telefonach" (dwie karty przeglądarki z
+  osobno czyszczoną bazą): "telefon A" ma stawkę malowania ręcznie
+  zmienioną na **25 zł** (domyślna to 22) i 1 projekt → eksport → **"nowy
+  telefon"** (świeża baza, własny seed: stawka malowania = **22**, 60
+  pozycji cennika) → import kopii → **60 pozycji cennika (nie 120)**,
+  stawka malowania **25** (przywrócona z kopii, nadpisała świeży domyślny
+  seed), projekt "Projekt z telefonu A" obecny. Dodatkowo przetestowany
+  cały przepływ przez prawdziwy `<input type="file">` (nie tylko funkcję
+  wprost) — zaimportowane dane firmy pojawiły się poprawnie po wybraniu pliku.
+- **Web Share**: `navigator.share` niedostępne w środowisku testowym
+  (typowe dla przeglądarki desktopowej bez tego API) → przycisk "Udostępnij"
+  poprawnie ukryty. Po drodze znaleziony i naprawiony **realny bug**:
+  atrybut `hidden` nie działał na przyciskach (`.btn { display:
+  inline-block }` ma tę samą specyficzność co domyślne `[hidden]`
+  przeglądarki i wygrywał jako reguła autorska) — przycisk był fizycznie
+  widoczny mimo `hidden=true`. Naprawione dopisaniem `[hidden] { display:
+  none !important; }`, zweryfikowane: `display` zmienione z `block` na
+  `none` po poprawce.
+- **Onboarding**: pokazuje się przy pierwszym uruchomieniu (świeży
+  `localStorage`), po zamknięciu ustawia flagę i **nie pojawia się ponownie**
+  przy zmianie zakładek (sprawdzone: przełączenie Cennik → Projekty nie
+  otworzyło dialogu drugi raz).
+
 ## Czego NIE udało się sprawdzić
 
 - **Rzeczywiste działanie na fizycznym iPhone** — testowałem w Browser
@@ -392,6 +441,17 @@ Zweryfikowane liczbami, po kolei:
   je inaczej niż desktop). Pole samo w sobie działa jako zwykły wolny
   tekst niezależnie od tego, ale wygoda podpowiedzi może być inna niż na
   komputerze.
+- **`navigator.share` na prawdziwym iOS Safari** — środowisko testowe go
+  nie ma, więc sprawdziłem tylko poprawne ukrycie przycisku, nie samo
+  działanie okna udostępniania (jakie aplikacje pokaże system, czy tekst
+  sformatuje się czytelnie w WhatsApp/mailu).
+- **Przepływ UI dla pozostałych 3 z 4 szablonów pomieszczeń** (Kuchnia,
+  Pokój/Salon, Przedpokój/Hol) — przez interfejs przetestowałem szczegółowo
+  tylko "Łazienkę" (logika jest identyczna dla wszystkich, ta sama funkcja).
+  Za to **poprawność samych nazw** sprawdziłem programowo dla wszystkich
+  4 szablonów naraz: wszystkie **22 wpisy w 4 szablonach mają dokładne
+  odpowiedniki w cenniku, 0 literówek/rozjazdów** — więc żadna pozycja nie
+  zostanie po cichu pominięta przy dodawaniu żadnego z 4 szablonów.
 
 ## Co zostaje otwarte
 
