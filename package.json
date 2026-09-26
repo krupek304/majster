@@ -1,0 +1,6 @@
+{
+  "name": "majster",
+  "private": true,
+  "type": "module",
+  "description": "Aplikacja do kosztorysowania prac remontowych (PWA)"
+}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Majster</title>
+  <meta name="theme-color" content="#1e293b" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-180.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Majster" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="topbar-title">Majster</h1>
+  </header>
+
+  <main id="app" aria-live="polite"></main>
+
+  <nav class="tabbar">
+    <button class="tab-btn" data-widok="projekty" aria-current="page">
+      <span class="tab-ikona">🏠</span><span>Projekty</span>
+    </button>
+    <button class="tab-btn" data-widok="cennik">
+      <span class="tab-ikona">📋</span><span>Cennik</span>
+    </button>
+  </nav>
+
+  <dialog id="dialog"></dialog>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
