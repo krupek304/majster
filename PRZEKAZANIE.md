@@ -33,6 +33,21 @@ dodania do ekranu głównego (Safari → Udostępnij → Dodaj do ekranu główn
   pod przyszłe konta — zgodnie z ustaleniem, że teraz jest jeden użytkownik,
   ale architektura ma nie blokować dodania kolejnych kont później. Żadnego
   logowania/UI multi-user nie zbudowano teraz celowo (nie było potrzebne).
+- **Pomieszczenie** (2026-09-26, runda 4) — drugi, niezależny wymiar na
+  pozycji kosztorysu (wolny tekst + podpowiedzi: Kuchnia, Łazienka, Salon...).
+  Lista da się grupować wg kategorii ALBO wg pomieszczenia (przełącznik na
+  ekranie kosztorysu) — pokazuje ile kosztowała konkretna łazienka, nie
+  tylko konkretny etap prac w całym mieszkaniu.
+- **Kategoria.ukryta** (runda 4) — kategorie można ukryć (znikają z
+  dropdownów wyboru), nie tylko dodawać. Nic nie usuwa danych — pozycje,
+  które już mają ukrytą kategorię, nadal ją poprawnie pokazują.
+- **Płatności** (runda 4, nowy store) — wpłaty klienta (kwota, data, opis)
+  przypisane do projektu; "Zapłacono" / "Pozostało" liczone automatycznie.
+  Kasowane razem z projektem (`usunProjekt` czyści też jego płatności).
+- **Ustawienia firmy** (runda 4, nowy store, jeden rekord) — nazwa/telefon/
+  e-mail używane w nagłówku wydruku/PDF. Nowa 3. zakładka "Ustawienia" —
+  tam też zarządzanie kategoriami (ukryj/pokaż/dodaj nową — to jest UI,
+  którego brakowało do istniejącej wcześniej funkcji `dodajKategorie`).
 
 ### Historia: podkategorie → scalone z cennikiem (2026-09-26)
 
@@ -260,6 +275,62 @@ starsza pozycja miałaby jednostkę spoza tej szóstki (wpisaną ręcznie przed
 zmianą), dopisuje się ją jako dodatkową opcję zamiast po cichu zamienić na
 "szt." przy zapisie.
 
+### Runda 4 (2026-09-26, wieczór): wszystkie 9 sugestii z listy usprawnień
+
+Użytkownik dostał ode mnie 9 propozycji (3× kategorie, 3× funkcjonalność,
+3× wygląd) i poprosił o wdrożenie wszystkich naraz. Zrobione: drugi wymiar
+"Pomieszczenie", UI do dodawania i ukrywania kategorii, śledzenie płatności,
+wyszukiwarka w cenniku i w wyborze pozycji, nagłówek do PDF z danymi firmy,
+tryb ciemny (systemowy), ikony kategorii, pasek podziału kosztów. Baza
+podniesiona do **wersji 4** (nowe store'y `platnosci`, `ustawienia`).
+
+Zweryfikowane liczbami, po kolei:
+
+- **Pomieszczenie + przełącznik grupowania**: dodano 2 pozycje w różnych
+  kategoriach i pomieszczeniach (Malowanie/Łazienka 20 m²×22 zł=440 zł,
+  Płytki/Kuchnia 10 m²×110 zł=1100 zł) → suma **1540,00 zł** (zgodna).
+  Grupowanie "Wg pomieszczenia" poprawnie pokazało nagłówki "ŁAZIENKA" i
+  "KUCHNIA" zamiast kategorii, z kategorią jako tag drugiego wymiaru w
+  wierszu pozycji.
+- **Pasek podziału kosztów**: dla sumy 1540 zł (440+1100) pokazał **29% i
+  71%** — dokładnie 440/1540 i 1100/1540 zaokrąglone. Przy jednej kategorii
+  pasek poprawnie się nie pokazuje (brak sensu porównywać jedną wartość
+  samą ze sobą).
+- **Płatności**: dodanie wpłaty 500 zł → **Zapłacono: 500,00 zł / Pozostało:
+  1040,00 zł** (1540−500, zgodne); usunięcie tej wpłaty → **z powrotem
+  0,00 zł / 1540,00 zł**. Usunięcie całego projektu z płatnością: **przed
+  usunięciem 1 płatność w bazie, po usunięciu 0** (zweryfikowane wprost na
+  `pobierzPlatnosciProjektu`, ze świeżym importem modułu — pierwsza próba
+  dała fałszywy negatyw przez cache modułów ES w tej samej karcie
+  przeglądarki, nie przez błąd w kodzie; druga próba ze świeżym `import()`
+  potwierdziła poprawne działanie).
+- **Wyszukiwarka w cenniku**: przed filtrem **60** pozycji, fraza "gniazdka"
+  → **1** pasująca pozycja ("Montaż osprzętu elektrycznego..."). Wyszukiwarka
+  w dropdownie "Z cennika" (dodawanie pozycji): fraza "malowanie" → **3
+  widoczne opcje w 2 grupach** (z 60/14 wcześniej).
+- **Zarządzanie kategoriami**: ukrycie "Prace dodatkowe i opcjonalne" →
+  przycisk zmienił się na "Pokaż", a w dropdownie wyboru kategorii przy
+  dodawaniu pozycji liczba opcji spadła z **15 do 14** (po wcześniejszym
+  dodaniu własnej kategorii "Ogród / Taras", która w dropdownie **jest**
+  widoczna — dodawanie i ukrywanie działają niezależnie, sprawdzone razem).
+- **Dane firmy → nagłówek druku**: przed zapisaniem danych firmy nagłówek
+  pokazywał tylko "Kosztorys / Projekt / Klient / Data" (bez linii firmy);
+  po zapisaniu "Majster Kowalski" + telefon → nagłówek doszedł o linię
+  **"Majster Kowalski · tel. 600100200"**.
+- **CSV**: nowa kolumna "Pomieszczenie" obecna i wypełniona poprawnymi
+  wartościami dla obu pozycji testowych, RAZEM nadal **1540**.
+- **Migracja v3 → v4**: symulacja starej bazy (1 kategoria bez pola
+  `ukryta`, 1 własna pozycja cennika, brak store'ów `platnosci`/`ustawienia`)
+  → po otwarciu nowym kodem: **14 kategorii, 61 pozycji cennika** (60 nowych
+  + 1 stara zachowana), nowe store'y utworzone i puste, wersja bazy **4**,
+  zero błędów. Stara, ręcznie dodana pozycja cennika przetrwała nietknięta.
+- **Tryb ciemny**: zweryfikowany wizualnie w obu wariantach (przełączenie
+  emulacji `colorScheme` w narzędziu) — czytelny kontrast, kolory
+  płatności/paska podziału widoczne w obu motywach, brak "białych dziur".
+- Poprawka przy okazji: `usunProjekt` **nie kasował** wcześniej powiązanych
+  płatności (osierocone rekordy w bazie) — dodane w tej samej rundzie,
+  zanim trafiło na produkcję.
+
 ## Czego NIE udało się sprawdzić
 
 - **Rzeczywiste działanie na fizycznym iPhone** — testowałem w Browser
@@ -293,6 +364,19 @@ zmianą), dopisuje się ją jako dodatkową opcję zamiast po cichu zamienić na
   poprawka nie pomoże retroaktywnie, dopóki nie dotrze tam choć raz. Stąd
   instrukcja "wymuś teraz" w mojej odpowiedzi na czacie, niezależna od tego
   mechanizmu.
+- **Wygląd nagłówka wydruku w realnym oknie drukowania** — sprawdziłem
+  tylko treść HTML (`.naglowek-druku`) i regułę CSS, nie faktyczny podgląd
+  wydruku/PDF (jak w poprzedniej rundzie — wymaga natywnego dialogu
+  drukowania).
+- **Tryb ciemny na prawdziwym iOS Safari** — zweryfikowany przez emulację
+  `prefers-color-scheme` w Browser pane, nie na faktycznym iPhonie z
+  włączonym trybem ciemnym w ustawieniach systemowych.
+- **Podpowiedzi pomieszczeń (`<datalist>`) na iOS Safari** — to jest
+  standardowy element HTML, ale Safari na iOS bywa niekonsekwentne w
+  renderowaniu datalisty (czasem nie pokazuje sugestii wcale albo pokazuje
+  je inaczej niż desktop). Pole samo w sobie działa jako zwykły wolny
+  tekst niezależnie od tego, ale wygoda podpowiedzi może być inna niż na
+  komputerze.
 
 ## Co zostaje otwarte
 

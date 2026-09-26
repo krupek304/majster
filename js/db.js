@@ -3,7 +3,7 @@
 // dziś zawsze jeden, domyślny użytkownik, ale schemat jest gotowy na dodanie kolejnych kont później.
 
 const DB_NAME = 'majster-db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const DOMYSLNY_UZYTKOWNIK_ID = 'ja';
 
 // Pełna kolejność etapów wykończenia mieszkania (od przygotowania po odbiór).
@@ -122,6 +122,13 @@ export function openDB() {
       if (!db.objectStoreNames.contains('uzytkownicy')) {
         db.createObjectStore('uzytkownicy', { keyPath: 'id' });
       }
+      if (!db.objectStoreNames.contains('platnosci')) {
+        const store = db.createObjectStore('platnosci', { keyPath: 'id' });
+        store.createIndex('projekt_id', 'projekt_id', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('ustawienia')) {
+        db.createObjectStore('ustawienia', { keyPath: 'id' });
+      }
     };
 
     req.onsuccess = async (event) => {
@@ -224,9 +231,15 @@ export async function dodajProjekt({ nazwa, klient }) {
 
 export async function usunProjekt(projektId) {
   const db = await openDB();
-  const pozycje = await getAll(db, 'pozycje', 'projekt_id', projektId);
+  const [pozycje, platnosci] = await Promise.all([
+    getAll(db, 'pozycje', 'projekt_id', projektId),
+    getAll(db, 'platnosci', 'projekt_id', projektId),
+  ]);
   await withStore(db, 'pozycje', 'readwrite', (store) => {
     pozycje.forEach((p) => store.delete(p.id));
+  });
+  await withStore(db, 'platnosci', 'readwrite', (store) => {
+    platnosci.forEach((p) => store.delete(p.id));
   });
   await withStore(db, 'projekty', 'readwrite', (store) => store.delete(projektId));
 }
@@ -242,9 +255,14 @@ export async function pobierzKategorie() {
 export async function dodajKategorie(nazwa) {
   const db = await openDB();
   const istniejace = await pobierzKategorie();
-  const kategoria = { id: cryptoId(), nazwa: nazwa.trim(), kolejnosc: istniejace.length };
+  const kategoria = { id: cryptoId(), nazwa: nazwa.trim(), kolejnosc: istniejace.length, ukryta: false };
   await withStore(db, 'kategorie', 'readwrite', (store) => store.put(kategoria));
   return kategoria;
+}
+
+export async function aktualizujKategorie(kategoria) {
+  const db = await openDB();
+  await withStore(db, 'kategorie', 'readwrite', (store) => store.put(kategoria));
 }
 
 // ---------- Cennik ----------
@@ -293,7 +311,7 @@ export async function pobierzPozycjeProjektu(projektId) {
   return pozycje.sort((a, b) => a.data.localeCompare(b.data));
 }
 
-export async function dodajPozycjeKosztorysu(projektId, { nazwa, kategoria, jednostka, ilosc, stawka }) {
+export async function dodajPozycjeKosztorysu(projektId, { nazwa, kategoria, jednostka, ilosc, stawka, pomieszczenie }) {
   const db = await openDB();
   const pozycja = {
     id: cryptoId(),
@@ -303,6 +321,7 @@ export async function dodajPozycjeKosztorysu(projektId, { nazwa, kategoria, jedn
     jednostka: jednostka.trim(),
     ilosc: Number(ilosc),
     stawka: Number(stawka),
+    pomieszczenie: (pomieszczenie || '').trim(),
     dodane_przez: DOMYSLNY_UZYTKOWNIK_ID,
     data: new Date().toISOString(),
   };
@@ -318,4 +337,47 @@ export async function aktualizujPozycjeKosztorysu(pozycja) {
 export async function usunPozycjeKosztorysu(id) {
   const db = await openDB();
   await withStore(db, 'pozycje', 'readwrite', (store) => store.delete(id));
+}
+
+// ---------- Płatności (zaliczki/wpłaty klienta na poczet projektu) ----------
+
+export async function pobierzPlatnosciProjektu(projektId) {
+  const db = await openDB();
+  const platnosci = await getAll(db, 'platnosci', 'projekt_id', projektId);
+  return platnosci.sort((a, b) => a.data.localeCompare(b.data));
+}
+
+export async function dodajPlatnosc(projektId, { kwota, data, opis }) {
+  const db = await openDB();
+  const platnosc = {
+    id: cryptoId(),
+    projekt_id: projektId,
+    kwota: Number(kwota),
+    data: data || new Date().toISOString().slice(0, 10),
+    opis: (opis || '').trim(),
+  };
+  await withStore(db, 'platnosci', 'readwrite', (store) => store.put(platnosc));
+  return platnosc;
+}
+
+export async function usunPlatnosc(id) {
+  const db = await openDB();
+  await withStore(db, 'platnosci', 'readwrite', (store) => store.delete(id));
+}
+
+// ---------- Ustawienia (dane firmy do nagłówka wydruku/PDF) ----------
+
+const ID_USTAWIEN_FIRMY = 'firma';
+
+export async function pobierzDaneFirmy() {
+  const db = await openDB();
+  const wszystkie = await getAll(db, 'ustawienia');
+  return wszystkie.find((u) => u.id === ID_USTAWIEN_FIRMY) || { id: ID_USTAWIEN_FIRMY, nazwa: '', telefon: '', email: '' };
+}
+
+export async function zapiszDaneFirmy({ nazwa, telefon, email }) {
+  const db = await openDB();
+  const dane = { id: ID_USTAWIEN_FIRMY, nazwa: (nazwa || '').trim(), telefon: (telefon || '').trim(), email: (email || '').trim() };
+  await withStore(db, 'ustawienia', 'readwrite', (store) => store.put(dane));
+  return dane;
 }

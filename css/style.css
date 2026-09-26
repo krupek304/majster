@@ -1,13 +1,39 @@
 :root {
   --tlo: #f3f4f6;
   --karta: #ffffff;
+  --pole-tlo: #ffffff;
   --tekst: #111827;
   --tekst-slaby: #6b7280;
   --granat: #1e293b;
   --akcent: #ea580c;
+  --akcent-jasny: #fdba74;
   --linia: #e5e7eb;
   --sukces: #16a34a;
   --blad: #dc2626;
+  --uwaga-tlo: #fff7ed;
+  --uwaga-ramka: #fed7aa;
+  --aktywne-tlo: #f9fafb;
+}
+
+/* Tryb ciemny - podąża za ustawieniem systemowym telefonu, bez osobnego
+   przełącznika w appce. Sensowne na budowie / w słabym świetle. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tlo: #0f172a;
+    --karta: #1e293b;
+    --pole-tlo: #0f172a;
+    --tekst: #f1f5f9;
+    --tekst-slaby: #94a3b8;
+    --granat: #0b1220;
+    --akcent: #fb923c;
+    --akcent-jasny: #fb923c;
+    --linia: #334155;
+    --sukces: #4ade80;
+    --blad: #f87171;
+    --uwaga-tlo: #422006;
+    --uwaga-ramka: #7c2d12;
+    --aktywne-tlo: #172033;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -104,7 +130,7 @@ body {
 }
 .btn.wtorny { background: var(--karta); color: var(--tekst); border: 1px solid var(--linia); }
 .btn.maly { width: auto; padding: 8px 12px; font-size: 13px; }
-.btn.niebezpieczny { background: var(--blad); }
+.btn.niebezpieczny { background: var(--blad); color: white; }
 
 .pusty-stan { text-align: center; color: var(--tekst-slaby); padding: 40px 16px; }
 
@@ -112,13 +138,14 @@ body {
   margin-bottom: 12px;
 }
 .pole label { display: block; font-size: 13px; color: var(--tekst-slaby); margin-bottom: 4px; }
-.pole input, .pole select {
+.pole input, .pole select, #szukaj-w-cenniku, #szukaj-cennik {
   width: 100%;
   padding: 10px;
   border: 1px solid var(--linia);
   border-radius: 8px;
   font-size: 15px;
-  background: white;
+  background: var(--pole-tlo);
+  color: var(--tekst);
 }
 
 .kategoria-naglowek {
@@ -130,6 +157,7 @@ body {
   display: flex;
   justify-content: space-between;
 }
+.karta > .kategoria-naglowek:first-child { margin-top: 0; }
 
 .pozycja {
   display: flex;
@@ -141,7 +169,7 @@ body {
   cursor: pointer;
 }
 .pozycja:last-child { border-bottom: none; }
-.pozycja:active { background: #f9fafb; }
+.pozycja:active { background: var(--aktywne-tlo); }
 .pozycja .nazwa { font-weight: 500; }
 .pozycja .szczegoly { font-size: 12px; color: var(--tekst-slaby); }
 .pozycja .kwota { font-weight: 600; white-space: nowrap; }
@@ -158,9 +186,81 @@ body {
   justify-content: space-between;
   align-items: center;
 }
-.podsumowanie .kwota-calkowita { font-size: 20px; font-weight: 700; color: #fdba74; }
+.podsumowanie .kwota-calkowita { font-size: 20px; font-weight: 700; color: var(--akcent-jasny); }
 
 .akcje-eksportu { display: flex; gap: 8px; margin-top: 14px; }
+
+/* ---- Przełącznik grupowania (kategoria / pomieszczenie) ---- */
+.przelacznik-grupowania {
+  display: flex;
+  background: var(--karta);
+  border-radius: 10px;
+  padding: 3px;
+  margin-bottom: 10px;
+  gap: 3px;
+}
+.btn-segment {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 8px 6px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--tekst-slaby);
+  cursor: pointer;
+}
+.btn-segment.aktywny { background: var(--akcent); color: white; font-weight: 600; }
+
+/* ---- Pasek podziału kosztów wg kategorii ---- */
+.podzial-kosztow { margin-top: 14px; }
+.pasek-podzialu {
+  display: flex;
+  height: 14px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--linia);
+}
+.segment-paska { height: 100%; }
+.legenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--tekst-slaby);
+}
+.legenda-pozycja { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.kropka { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+/* ---- Płatności ---- */
+.karta-platnosci { margin-top: 4px; }
+.platnosci-podsumowanie {
+  display: flex;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+.platnosci-podsumowanie > div {
+  flex: 1;
+  background: var(--tlo);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.platnosci-podsumowanie .etykieta { font-size: 12px; color: var(--tekst-slaby); }
+.kwota-zaplacono { font-size: 17px; font-weight: 700; color: var(--sukces); }
+.kwota-pozostalo { font-size: 17px; font-weight: 700; color: var(--akcent); }
+
+/* ---- Ustawienia: kategorie ---- */
+.sekcja-tytul { margin: 0 0 12px; font-size: 15px; }
+.lista-kategorii { display: flex; flex-direction: column; gap: 8px; }
+.wiersz-kategorii {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--linia);
+  font-size: 14px;
+}
+.wiersz-kategorii:last-child { border-bottom: none; }
 
 dialog {
   border: none;
@@ -169,6 +269,8 @@ dialog {
   width: min(420px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   overflow: auto;
+  background: var(--karta);
+  color: var(--tekst);
 }
 dialog::backdrop { background: rgba(0,0,0,0.4); }
 .dialog-tresc { padding: 18px; }
@@ -178,19 +280,29 @@ dialog::backdrop { background: rgba(0,0,0,0.4); }
 .uwaga {
   font-size: 12px;
   color: var(--tekst-slaby);
-  background: #fff7ed;
-  border: 1px solid #fed7aa;
+  background: var(--uwaga-tlo);
+  border: 1px solid var(--uwaga-ramka);
   border-radius: 8px;
   padding: 8px 10px;
   margin-bottom: 12px;
 }
 
+/* Nagłówek widoczny tylko na wydruku/PDF - ukryty na ekranie */
+.naglowek-druku { display: none; }
+
 /* ---- Widok wydruku / eksportu PDF ---- */
 @media print {
-  .topbar, .tabbar, .akcje-eksportu, .btn-usun, .pozycja .btn-edytuj { display: none !important; }
-  body { background: white; }
+  .topbar, .tabbar, .akcje-eksportu, .btn-usun, .przelacznik-grupowania,
+  #btn-dodaj-pozycje, #btn-dodaj-platnosc, .uwaga { display: none !important; }
+  body { background: white; color: black; }
   #app { padding: 0; max-width: none; }
-  .karta { box-shadow: none; border: none; padding: 0; }
-  .podsumowanie { position: static; background: none; color: var(--tekst); border-top: 2px solid var(--granat); border-radius: 0; }
-  .podsumowanie .kwota-calkowita { color: var(--tekst); }
+  .karta { box-shadow: none; border: none; padding: 0; background: none; }
+  .podsumowanie { position: static; background: none; color: black; border-top: 2px solid black; border-radius: 0; }
+  .podsumowanie .kwota-calkowita { color: black; }
+  .naglowek-druku { display: block; margin-bottom: 20px; }
+  .naglowek-druku h1 { font-size: 22px; margin: 6px 0; }
+  .naglowek-druku .firma-druk { font-size: 12px; color: #444; }
+  .naglowek-druku .meta-druku { font-size: 13px; margin-top: 6px; }
+  .kategoria-naglowek, .pozycja, .platnosci-podsumowanie > div { color: black; }
+  .kropka, .segment-paska { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }

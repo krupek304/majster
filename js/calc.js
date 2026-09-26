@@ -7,25 +7,41 @@ export function kwotaPozycji(ilosc, stawka) {
   return Math.round(i * s * 100) / 100;
 }
 
-// pozycje: [{ kategoria, ilosc, stawka }]
-// zwraca: [{ kategoria, suma }] posortowane wg pierwszego wystąpienia kategorii
-export function sumyKategorii(pozycje) {
+// pozycje: [{ [pole], ilosc, stawka }]
+// zwraca: [{ klucz, suma }] posortowane wg pierwszego wystąpienia wartości pola.
+// Używane zarówno do grupowania wg kategorii, jak i wg pomieszczenia.
+export function sumyPolem(pozycje, pole, domyslnaEtykieta) {
   const kolejnosc = [];
   const sumy = new Map();
   for (const p of pozycje) {
-    const kat = p.kategoria || 'Bez kategorii';
+    const klucz = p[pole] || domyslnaEtykieta;
     const kwota = kwotaPozycji(p.ilosc, p.stawka);
-    if (!sumy.has(kat)) {
-      sumy.set(kat, 0);
-      kolejnosc.push(kat);
+    if (!sumy.has(klucz)) {
+      sumy.set(klucz, 0);
+      kolejnosc.push(klucz);
     }
-    sumy.set(kat, Math.round((sumy.get(kat) + kwota) * 100) / 100);
+    sumy.set(klucz, Math.round((sumy.get(klucz) + kwota) * 100) / 100);
   }
-  return kolejnosc.map((kategoria) => ({ kategoria, suma: sumy.get(kategoria) }));
+  return kolejnosc.map((klucz) => ({ klucz, suma: sumy.get(klucz) }));
+}
+
+// pozycje: [{ kategoria, ilosc, stawka }]
+// zwraca: [{ kategoria, suma }] posortowane wg pierwszego wystąpienia kategorii
+export function sumyKategorii(pozycje) {
+  return sumyPolem(pozycje, 'kategoria', 'Bez kategorii').map(({ klucz, suma }) => ({ kategoria: klucz, suma }));
+}
+
+// pozycje: [{ pomieszczenie, ilosc, stawka }]
+export function sumyPomieszczen(pozycje) {
+  return sumyPolem(pozycje, 'pomieszczenie', 'Bez pomieszczenia').map(({ klucz, suma }) => ({ pomieszczenie: klucz, suma }));
 }
 
 export function sumaCalkowita(pozycje) {
   return pozycje.reduce((acc, p) => Math.round((acc + kwotaPozycji(p.ilosc, p.stawka)) * 100) / 100, 0);
+}
+
+export function sumaPlatnosci(platnosci) {
+  return platnosci.reduce((acc, p) => Math.round((acc + Number(p.kwota || 0)) * 100) / 100, 0);
 }
 
 export function formatujKwote(kwota) {

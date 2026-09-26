@@ -1,4 +1,4 @@
-import { kwotaPozycji, sumyKategorii, sumaCalkowita, formatujKwote } from './calc.js';
+import { kwotaPozycji, sumyKategorii, sumyPomieszczen, sumaCalkowita, sumaPlatnosci, formatujKwote } from './calc.js';
 
 let ok = 0, fail = 0;
 function assertEq(actual, expected, label) {
@@ -29,6 +29,25 @@ assertEq(suby.find(s => s.kategoria === 'Elektryka').suma, 1500, 'suma kategorii
 
 assertEq(sumaCalkowita([]), 0, 'sumaCalkowita([]) pusta lista');
 assertEq(sumyKategorii([]).length, 0, 'sumyKategorii([]) pusta lista');
+
+// Pomieszczenia - ten sam mechanizm co kategorie, ale drugi wymiar grupowania
+const pozycjeZPomieszczeniami = [
+  { pomieszczenie: 'Łazienka', ilosc: 5, stawka: 100 },
+  { pomieszczenie: 'Łazienka', ilosc: 2, stawka: 50 },
+  { pomieszczenie: 'Kuchnia', ilosc: 10, stawka: 30 },
+  { ilosc: 1, stawka: 20 }, // bez pomieszczenia -> "Bez pomieszczenia"
+];
+const subyPom = sumyPomieszczen(pozycjeZPomieszczeniami);
+console.log('sumyPomieszczen ->', JSON.stringify(subyPom));
+assertEq(subyPom.length, 3, 'liczba pomieszczeń (przed=4 pozycje, po=3 grupy)');
+assertEq(subyPom.find(s => s.pomieszczenie === 'Łazienka').suma, 600, 'suma Łazienka (500+100)');
+assertEq(subyPom.find(s => s.pomieszczenie === 'Kuchnia').suma, 300, 'suma Kuchnia');
+assertEq(subyPom.find(s => s.pomieszczenie === 'Bez pomieszczenia').suma, 20, 'pozycja bez pomieszczenia dostaje domyślną etykietę');
+
+// Płatności
+const platnosci = [{ kwota: 2000 }, { kwota: 1500.50 }, { kwota: 0 }];
+assertEq(sumaPlatnosci(platnosci), 3500.5, 'sumaPlatnosci(3 wpłaty)');
+assertEq(sumaPlatnosci([]), 0, 'sumaPlatnosci([]) pusta lista');
 
 console.log('formatujKwote(3375) ->', formatujKwote(3375));
 

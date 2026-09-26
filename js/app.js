@@ -1,22 +1,54 @@
 import {
   pobierzProjekty, dodajProjekt, usunProjekt,
-  pobierzKategorie, dodajKategorie,
+  pobierzKategorie, dodajKategorie, aktualizujKategorie,
   pobierzCennik, dodajPozycjeCennika, aktualizujPozycjeCennika, usunPozycjeCennika,
   pobierzPozycjeProjektu, dodajPozycjeKosztorysu, aktualizujPozycjeKosztorysu, usunPozycjeKosztorysu,
+  pobierzPlatnosciProjektu, dodajPlatnosc, usunPlatnosc,
+  pobierzDaneFirmy, zapiszDaneFirmy,
 } from './db.js';
-import { kwotaPozycji, sumyKategorii, sumaCalkowita, formatujKwote } from './calc.js';
+import { kwotaPozycji, sumyKategorii, sumyPolem, sumaCalkowita, sumaPlatnosci, formatujKwote } from './calc.js';
 
 const app = document.getElementById('app');
 const topbarTitle = document.getElementById('topbar-title');
 const dialog = document.getElementById('dialog');
 const tabButtons = document.querySelectorAll('.tab-btn');
 
-const state = { widok: 'projekty', projektId: null };
+const state = { widok: 'projekty', projektId: null, grupowanie: 'kategoria' };
 
 // Zamknięty zestaw jednostek - te same, których używają domyślne pozycje
 // cennika w db.js. Zamiast wolnego tekstu (łatwo o literówkę typu "m2"/"m²"/"metr")
 // wybiera się z listy, żeby sumy i grupowanie zawsze się zgadzały.
 const JEDNOSTKI = ['szt.', 'm2', 'mb', 'pkt', 'kpl.', 'usł.'];
+
+// Tylko podpowiedzi (datalist) - pole zostaje wolnym tekstem, bo nazwy
+// pomieszczeń są unikalne dla każdego mieszkania i nie da się ich z góry zgadnąć.
+const POMIESZCZENIA_PODPOWIEDZI = [
+  'Kuchnia', 'Łazienka', 'Salon', 'Sypialnia', 'Przedpokój / Hol', 'Balkon / Taras', 'Cały dom / mieszkanie',
+];
+
+// Ikony kategorii - tylko orientacja wzrokowa w długiej liście, nie wpływają na dane.
+const IKONY_KATEGORII = {
+  'Przygotowanie i planowanie': '📋',
+  'Prace rozbiórkowe i konstrukcyjne': '🔨',
+  'Instalacje wewnętrzne (stan surowy)': '🔌',
+  'Prace tynkarskie i wylewki': '🧱',
+  'Zabudowy z płyt gipsowo-kartonowych (GK)': '📐',
+  'Prace glazurnicze i terakota': '🚿',
+  'Gładzie i przygotowanie ścian do malowania': '🖌️',
+  'Podłogi': '🪵',
+  'Stolarka drzwiowa i okienna': '🚪',
+  'Malowanie i wykończenie ścian': '🎨',
+  'Biały montaż i osprzęt': '🚰',
+  'Kuchnia i AGD': '🍳',
+  'Sprzątanie i odbiór': '🧹',
+  'Prace dodatkowe i opcjonalne': '✨',
+};
+function ikonaKategorii(nazwa) {
+  return IKONY_KATEGORII[nazwa] || '📁';
+}
+
+// Paleta do paska podziału kosztów - cykliczna, wystarcza na więcej niż 14 kategorii.
+const PALETA_WYKRESU = ['#ea580c', '#0ea5e9', '#22c55e', '#a855f7', '#f43f5e', '#eab308', '#14b8a6', '#6366f1', '#f97316', '#84cc16', '#ec4899', '#06b6d4', '#8b5cf6', '#64748b'];
 
 function esc(str) {
   const d = document.createElement('div');
@@ -37,6 +69,17 @@ function htmlSelectJednostka(id, wybrana) {
   `;
 }
 
+// Kategorie widoczne w dropdownach do wyboru: bez ukrytych, chyba że to
+// aktualna kategoria edytowanej pozycji (nie chowamy tego, co już wybrane).
+function kategorieWidoczne(kategorie, zachowajNazwe) {
+  return kategorie.filter((k) => !k.ukryta || k.nazwa === zachowajNazwe);
+}
+
+function formatujStawke(stawka, jednostka) {
+  if (!stawka) return 'stawka nieustalona';
+  return `${formatujKwote(stawka)}/${jednostka}`;
+}
+
 // ---------- Nawigacja ----------
 
 tabButtons.forEach((btn) => {
@@ -47,7 +90,6 @@ function ustawWidok(widok, projektId = null) {
   state.widok = widok;
   state.projektId = projektId;
   tabButtons.forEach((btn) => {
-    btn.toggleAttribute('aria-current', btn.dataset.widok === widok);
     if (btn.dataset.widok === widok) btn.setAttribute('aria-current', 'page');
     else btn.removeAttribute('aria-current');
   });
@@ -58,6 +100,7 @@ async function render() {
   if (state.widok === 'projekty') return renderProjekty();
   if (state.widok === 'kosztorys') return renderKosztorys(state.projektId);
   if (state.widok === 'cennik') return renderCennik();
+  if (state.widok === 'ustawienia') return renderUstawienia();
 }
 
 // ---------- Widok: Projekty ----------
@@ -129,19 +172,26 @@ async function renderKosztorys(projektId) {
   topbarTitle.innerHTML = `<button class="wstecz" id="btn-wstecz">←</button> ${esc(projekt.nazwa)}`;
   document.getElementById('btn-wstecz').addEventListener('click', () => ustawWidok('projekty'));
 
-  const pozycje = await pobierzPozycjeProjektu(projektId);
-  const grupy = grupujPoKategorii(pozycje);
+  const [pozycje, platnosci, firma] = await Promise.all([
+    pobierzPozycjeProjektu(projektId),
+    pobierzPlatnosciProjektu(projektId),
+    pobierzDaneFirmy(),
+  ]);
+
+  const pole = state.grupowanie === 'pomieszczenie' ? 'pomieszczenie' : 'kategoria';
+  const domyslnaEtykieta = state.grupowanie === 'pomieszczenie' ? 'Bez pomieszczenia' : 'Bez kategorii';
+  const grupy = grupujPozycje(pozycje, pole, domyslnaEtykieta);
   const suma = sumaCalkowita(pozycje);
 
   const grupyHtml = pozycje.length === 0
     ? '<div class="pusty-stan">Brak pozycji.<br>Dodaj pierwszą wykonaną pracę.</div>'
-    : grupy.map(({ kategoria, pozycje: poz, suma: sumaKat }) => `
-      <div class="kategoria-naglowek"><span>${esc(kategoria)}</span><span>${formatujKwote(sumaKat)}</span></div>
+    : grupy.map(({ klucz, pozycje: poz, suma: sumaGrupy }) => `
+      <div class="kategoria-naglowek"><span>${state.grupowanie === 'kategoria' ? ikonaKategorii(klucz) + ' ' : ''}${esc(klucz)}</span><span>${formatujKwote(sumaGrupy)}</span></div>
       ${poz.map((p) => `
         <div class="pozycja" data-edytuj="${p.id}">
           <div>
             <div class="nazwa">${esc(p.nazwa)}</div>
-            <div class="szczegoly">${p.ilosc} ${esc(p.jednostka)} &times; ${formatujStawke(p.stawka, p.jednostka)}</div>
+            <div class="szczegoly">${p.ilosc} ${esc(p.jednostka)} &times; ${formatujStawke(p.stawka, p.jednostka)}${htmlDrugiWymiar(p)}</div>
           </div>
           <div class="kwota">${p.stawka ? formatujKwote(kwotaPozycji(p.ilosc, p.stawka)) : '—'}</div>
           <button class="btn-usun" data-usun="${p.id}" aria-label="Usuń" title="Usuń">🗑</button>
@@ -150,9 +200,26 @@ async function renderKosztorys(projektId) {
     `).join('');
 
   app.innerHTML = `
+    <div class="naglowek-druku">
+      ${firma.nazwa || firma.telefon || firma.email ? `<div class="firma-druk">${[esc(firma.nazwa), firma.telefon ? 'tel. ' + esc(firma.telefon) : '', esc(firma.email)].filter(Boolean).join(' &middot; ')}</div>` : ''}
+      <h1>Kosztorys</h1>
+      <div class="meta-druku">
+        <div><strong>Projekt:</strong> ${esc(projekt.nazwa)}</div>
+        ${projekt.klient ? `<div><strong>Klient:</strong> ${esc(projekt.klient)}</div>` : ''}
+        <div><strong>Data:</strong> ${new Date().toLocaleDateString('pl-PL')}</div>
+      </div>
+    </div>
     ${projekt.klient ? `<div class="uwaga">Klient: ${esc(projekt.klient)}</div>` : ''}
+    ${pozycje.length > 0 ? `
+      <div class="przelacznik-grupowania">
+        <button class="btn-segment ${state.grupowanie === 'kategoria' ? 'aktywny' : ''}" data-grupuj="kategoria">Wg kategorii</button>
+        <button class="btn-segment ${state.grupowanie === 'pomieszczenie' ? 'aktywny' : ''}" data-grupuj="pomieszczenie">Wg pomieszczenia</button>
+      </div>
+    ` : ''}
     <div class="karta">${grupyHtml}</div>
     <button class="btn" id="btn-dodaj-pozycje">+ Dodaj pozycję</button>
+    ${htmlPasekPodzialu(pozycje)}
+    ${htmlPlatnosci(platnosci, suma)}
     <div class="podsumowanie">
       <span>Razem</span>
       <span class="kwota-calkowita">${formatujKwote(suma)}</span>
@@ -172,6 +239,12 @@ async function renderKosztorys(projektId) {
     await usunProjekt(projektId);
     ustawWidok('projekty');
   });
+  app.querySelectorAll('[data-grupuj]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.grupowanie = btn.dataset.grupuj;
+      renderKosztorys(projektId);
+    });
+  });
   app.querySelectorAll('[data-edytuj]').forEach((el) => {
     el.addEventListener('click', () => {
       const pozycja = pozycje.find((p) => p.id === el.dataset.edytuj);
@@ -185,32 +258,133 @@ async function renderKosztorys(projektId) {
       renderKosztorys(projektId);
     });
   });
+
+  const btnDodajPlatnosc = document.getElementById('btn-dodaj-platnosc');
+  if (btnDodajPlatnosc) btnDodajPlatnosc.addEventListener('click', () => dialogPlatnosc(projektId));
+  app.querySelectorAll('[data-usun-platnosc]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await usunPlatnosc(btn.dataset.usunPlatnosc);
+      renderKosztorys(projektId);
+    });
+  });
 }
 
-function formatujStawke(stawka, jednostka) {
-  if (!stawka) return 'stawka nieustalona';
-  return `${formatujKwote(stawka)}/${jednostka}`;
+// Tag drugiego wymiaru w wierszu pozycji: gdy grupujemy wg kategorii, pokaż
+// pomieszczenie (jeśli podane); gdy grupujemy wg pomieszczenia, pokaż kategorię.
+function htmlDrugiWymiar(p) {
+  if (state.grupowanie === 'kategoria') {
+    return p.pomieszczenie ? ` &middot; 📍 ${esc(p.pomieszczenie)}` : '';
+  }
+  return p.kategoria ? ` &middot; ${ikonaKategorii(p.kategoria)} ${esc(p.kategoria)}` : '';
 }
 
-function grupujPoKategorii(pozycje) {
-  const sumy = sumyKategorii(pozycje);
-  return sumy.map(({ kategoria, suma }) => ({
-    kategoria,
+function grupujPozycje(pozycje, pole, domyslnaEtykieta) {
+  const sumy = sumyPolem(pozycje, pole, domyslnaEtykieta);
+  return sumy.map(({ klucz, suma }) => ({
+    klucz,
     suma,
-    pozycje: pozycje.filter((p) => (p.kategoria || 'Bez kategorii') === kategoria),
+    pozycje: pozycje.filter((p) => (p[pole] || domyslnaEtykieta) === klucz),
   }));
 }
 
+// Prosty pasek podziału kosztów wg kategorii (zawsze wg kategorii, niezależnie
+// od przełącznika grupowania listy) - "gdzie poszły pieniądze" na pierwszy rzut oka.
+function htmlPasekPodzialu(pozycje) {
+  const suma = sumaCalkowita(pozycje);
+  if (suma <= 0) return '';
+  const grupy = sumyKategorii(pozycje).filter((g) => g.suma > 0);
+  if (grupy.length < 2) return '';
+  const segmenty = grupy.map((g, i) => {
+    const proc = (g.suma / suma) * 100;
+    const kolor = PALETA_WYKRESU[i % PALETA_WYKRESU.length];
+    return `<div class="segment-paska" style="width:${proc.toFixed(2)}%; background:${kolor}" title="${esc(g.kategoria)}: ${formatujKwote(g.suma)} (${proc.toFixed(0)}%)"></div>`;
+  }).join('');
+  const legenda = grupy.map((g, i) => {
+    const proc = Math.round((g.suma / suma) * 100);
+    const kolor = PALETA_WYKRESU[i % PALETA_WYKRESU.length];
+    return `<div class="legenda-pozycja"><span class="kropka" style="background:${kolor}"></span>${ikonaKategorii(g.kategoria)} ${esc(g.kategoria)} &middot; ${proc}%</div>`;
+  }).join('');
+  return `
+    <div class="podzial-kosztow">
+      <div class="pasek-podzialu">${segmenty}</div>
+      <div class="legenda">${legenda}</div>
+    </div>
+  `;
+}
+
+// Płatności - ile klient wpłacił, ile zostało. Realny problem fachowca,
+// nie tylko sam koszt prac.
+function htmlPlatnosci(platnosci, suma) {
+  const zaplacono = sumaPlatnosci(platnosci);
+  const pozostalo = Math.round((suma - zaplacono) * 100) / 100;
+  const listaHtml = platnosci.map((p) => `
+    <div class="pozycja" data-usun-platnosc="${p.id}">
+      <div>
+        <div class="nazwa">${formatujKwote(p.kwota)}</div>
+        <div class="szczegoly">${new Date(p.data).toLocaleDateString('pl-PL')}${p.opis ? ' &middot; ' + esc(p.opis) : ''}</div>
+      </div>
+    </div>
+  `).join('');
+  return `
+    <div class="karta karta-platnosci">
+      <div class="kategoria-naglowek"><span>Płatności</span></div>
+      <div class="platnosci-podsumowanie">
+        <div><span class="etykieta">Zapłacono</span><br><span class="kwota-zaplacono">${formatujKwote(zaplacono)}</span></div>
+        <div><span class="etykieta">Pozostało</span><br><span class="kwota-pozostalo">${formatujKwote(pozostalo)}</span></div>
+      </div>
+      ${listaHtml}
+      <button class="btn wtorny maly" id="btn-dodaj-platnosc">+ Dodaj wpłatę</button>
+    </div>
+  `;
+}
+
+function dialogPlatnosc(projektId) {
+  const dzisiaj = new Date().toISOString().slice(0, 10);
+  otworzDialog(`
+    <h2>Nowa wpłata</h2>
+    <div class="pole">
+      <label for="pole-kwota-platnosci">Kwota (zł)</label>
+      <input id="pole-kwota-platnosci" type="number" step="0.01" min="0" value="0" />
+    </div>
+    <div class="pole">
+      <label for="pole-data-platnosci">Data</label>
+      <input id="pole-data-platnosci" type="date" value="${dzisiaj}" />
+    </div>
+    <div class="pole">
+      <label for="pole-opis-platnosci">Opis (opcjonalnie)</label>
+      <input id="pole-opis-platnosci" type="text" placeholder="np. zaliczka" />
+    </div>
+    <div class="dialog-akcje">
+      <button class="btn wtorny" id="btn-anuluj">Anuluj</button>
+      <button class="btn" id="btn-zapisz">Dodaj</button>
+    </div>
+  `);
+  document.getElementById('btn-anuluj').addEventListener('click', zamknijDialog);
+  document.getElementById('btn-zapisz').addEventListener('click', async () => {
+    const kwota = document.getElementById('pole-kwota-platnosci').value;
+    if (!kwota || Number(kwota) <= 0) return;
+    await dodajPlatnosc(projektId, {
+      kwota,
+      data: document.getElementById('pole-data-platnosci').value,
+      opis: document.getElementById('pole-opis-platnosci').value,
+    });
+    zamknijDialog();
+    renderKosztorys(projektId);
+  });
+}
+
 async function dialogPozycja(projektId, edytowanaPozycja = null) {
-  const [kategorie, cennik] = await Promise.all([pobierzKategorie(), pobierzCennik()]);
+  const [kategorieWszystkie, cennik] = await Promise.all([pobierzKategorie(), pobierzCennik()]);
+  const kategorie = kategorieWidoczne(kategorieWszystkie, edytowanaPozycja?.kategoria);
   const edycja = !!edytowanaPozycja;
 
   otworzDialog(`
     <h2>${edycja ? 'Edytuj pozycję' : 'Nowa pozycja'}</h2>
     ${cennik.length > 0 ? `
       <div class="pole">
-        <label for="pole-z-cennika">Z cennika (opcjonalnie)</label>
-        ${htmlSelectCennik('pole-z-cennika', kategorie, cennik)}
+        <label for="szukaj-cennik">Z cennika (opcjonalnie)</label>
+        <input id="szukaj-cennik" type="text" placeholder="Szukaj czynności..." style="margin-bottom:6px;" />
+        ${htmlSelectCennik('pole-z-cennika', kategorieWszystkie, cennik)}
       </div>
     ` : ''}
     <div class="pole">
@@ -220,8 +394,15 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
     <div class="pole">
       <label for="pole-kategoria">Kategoria</label>
       <select id="pole-kategoria">
-        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${edytowanaPozycja?.kategoria === k.nazwa ? 'selected' : ''}>${esc(k.nazwa)}</option>`).join('')}
+        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${edytowanaPozycja?.kategoria === k.nazwa ? 'selected' : ''}>${ikonaKategorii(k.nazwa)} ${esc(k.nazwa)}</option>`).join('')}
       </select>
+    </div>
+    <div class="pole">
+      <label for="pole-pomieszczenie">Pomieszczenie (opcjonalnie)</label>
+      <input id="pole-pomieszczenie" type="text" list="lista-pomieszczen" placeholder="np. Łazienka" value="${esc(edytowanaPozycja?.pomieszczenie ?? '')}" />
+      <datalist id="lista-pomieszczen">
+        ${POMIESZCZENIA_PODPOWIEDZI.map((p) => `<option value="${esc(p)}"></option>`).join('')}
+      </datalist>
     </div>
     <div class="pole">
       <label for="pole-ilosc">Ilość</label>
@@ -247,11 +428,13 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
 
   const poleNazwa = document.getElementById('pole-nazwa');
   const poleKategoria = document.getElementById('pole-kategoria');
+  const polePomieszczenie = document.getElementById('pole-pomieszczenie');
   const poleIlosc = document.getElementById('pole-ilosc');
   const poleJednostka = document.getElementById('pole-jednostka');
   const poleStawka = document.getElementById('pole-stawka');
   const podgladKwoty = document.getElementById('podglad-kwoty');
   const poleZCennika = document.getElementById('pole-z-cennika');
+  const szukajCennik = document.getElementById('szukaj-cennik');
 
   function przeliczPodglad() {
     podgladKwoty.textContent = formatujKwote(kwotaPozycji(poleIlosc.value, poleStawka.value));
@@ -270,6 +453,9 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
       przeliczPodglad();
     });
   }
+  if (szukajCennik) {
+    szukajCennik.addEventListener('input', () => filtrujSelectCennik(szukajCennik, poleZCennika));
+  }
 
   document.getElementById('btn-anuluj').addEventListener('click', zamknijDialog);
   document.getElementById('btn-zapisz').addEventListener('click', async () => {
@@ -278,17 +464,34 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
     const dane = {
       nazwa,
       kategoria: poleKategoria.value,
+      pomieszczenie: polePomieszczenie.value,
       jednostka: poleJednostka.value || 'szt.',
       ilosc: poleIlosc.value,
       stawka: poleStawka.value,
     };
     if (edycja) {
-      await aktualizujPozycjeKosztorysu({ ...edytowanaPozycja, ...dane, ilosc: Number(dane.ilosc), stawka: Number(dane.stawka) });
+      await aktualizujPozycjeKosztorysu({ ...edytowanaPozycja, ...dane, ilosc: Number(dane.ilosc), stawka: Number(dane.stawka), pomieszczenie: dane.pomieszczenie.trim() });
     } else {
       await dodajPozycjeKosztorysu(projektId, dane);
     }
     zamknijDialog();
     renderKosztorys(projektId);
+  });
+}
+
+// Ukrywa (nie usuwa z DOM) opcje/optgroupy z cennika niepasujące do frazy -
+// select zostaje ten sam element, więc reszta obsługi (change -> autofill)
+// działa bez zmian.
+function filtrujSelectCennik(input, select) {
+  const fraza = input.value.trim().toLowerCase();
+  select.querySelectorAll('optgroup').forEach((grupa) => {
+    let widoczneWGrupie = 0;
+    grupa.querySelectorAll('option').forEach((opt) => {
+      const pasuje = !fraza || opt.textContent.toLowerCase().includes(fraza);
+      opt.hidden = !pasuje;
+      if (pasuje) widoczneWGrupie++;
+    });
+    grupa.hidden = widoczneWGrupie === 0;
   });
 }
 
@@ -299,7 +502,7 @@ function htmlSelectCennik(id, kategorie, cennik) {
     const lista = cennik.filter((c) => c.kategoria === k.nazwa);
     if (lista.length === 0) return '';
     return `
-      <optgroup label="${esc(k.nazwa)}">
+      <optgroup label="${ikonaKategorii(k.nazwa)} ${esc(k.nazwa)}">
         ${lista.map((c) => `<option value="${c.id}">${esc(c.nazwa)} (${c.stawka ? formatujKwote(c.stawka) + '/' + esc(c.jednostka) : 'stawka do ustalenia'})</option>`).join('')}
       </optgroup>
     `;
@@ -313,12 +516,12 @@ function htmlSelectCennik(id, kategorie, cennik) {
 }
 
 function eksportujCSV(projekt, pozycje) {
-  const naglowek = ['Kategoria', 'Nazwa', 'Ilość', 'Jednostka', 'Stawka', 'Kwota'];
+  const naglowek = ['Kategoria', 'Pomieszczenie', 'Nazwa', 'Ilość', 'Jednostka', 'Stawka', 'Kwota'];
   const wiersze = pozycje.map((p) => [
-    p.kategoria, p.nazwa, p.ilosc, p.jednostka, p.stawka, kwotaPozycji(p.ilosc, p.stawka),
+    p.kategoria, p.pomieszczenie || '', p.nazwa, p.ilosc, p.jednostka, p.stawka, kwotaPozycji(p.ilosc, p.stawka),
   ]);
   wiersze.push([]);
-  wiersze.push(['', '', '', '', 'RAZEM', sumaCalkowita(pozycje)]);
+  wiersze.push(['', '', '', '', '', 'RAZEM', sumaCalkowita(pozycje)]);
 
   const csv = [naglowek, ...wiersze]
     .map((wiersz) => wiersz.map((pole) => `"${String(pole ?? '').replace(/"/g, '""')}"`).join(';'))
@@ -337,36 +540,50 @@ function eksportujCSV(projekt, pozycje) {
 
 // ---------- Widok: Cennik ----------
 
+let cennikPamiec = [];
+
 async function renderCennik() {
   topbarTitle.textContent = 'Cennik';
-  const cennik = await pobierzCennik();
+  cennikPamiec = await pobierzCennik();
 
-  const listaHtml = cennik.length === 0
-    ? '<div class="pusty-stan">Cennik jest pusty.<br>Dodaj typowe czynności ze stawkami, żeby szybciej budować kosztorysy.</div>'
-    : cennik.map((c) => `
+  app.innerHTML = `
+    <div class="uwaga">To Twoje domyślne stawki — wybierasz je przy dodawaniu pozycji do kosztorysu. Stuknij pozycję, żeby zmienić jej stawkę na stałe.</div>
+    <input id="szukaj-w-cenniku" type="text" placeholder="🔍 Szukaj w cenniku..." style="margin-bottom:10px;" />
+    <div class="karta" id="lista-cennika"></div>
+    <button class="btn" id="btn-nowa-pozycja-cennika">+ Dodaj czynność do cennika</button>
+  `;
+
+  renderListaCennika('');
+  document.getElementById('szukaj-w-cenniku').addEventListener('input', (e) => renderListaCennika(e.target.value));
+  document.getElementById('btn-nowa-pozycja-cennika').addEventListener('click', () => dialogPozycjaCennika());
+}
+
+function renderListaCennika(filtr) {
+  const fraza = filtr.trim().toLowerCase();
+  const przefiltrowany = !fraza
+    ? cennikPamiec
+    : cennikPamiec.filter((c) => c.nazwa.toLowerCase().includes(fraza) || c.kategoria.toLowerCase().includes(fraza));
+
+  const kontener = document.getElementById('lista-cennika');
+  kontener.innerHTML = przefiltrowany.length === 0
+    ? `<div class="pusty-stan">${cennikPamiec.length === 0 ? 'Cennik jest pusty.<br>Dodaj typowe czynności ze stawkami, żeby szybciej budować kosztorysy.' : 'Brak wyników dla tej frazy.'}</div>`
+    : przefiltrowany.map((c) => `
       <div class="pozycja" data-edytuj="${c.id}">
         <div>
           <div class="nazwa">${esc(c.nazwa)}</div>
-          <div class="szczegoly">${esc(c.kategoria)} &middot; ${formatujStawke(c.stawka, c.jednostka)}</div>
+          <div class="szczegoly">${ikonaKategorii(c.kategoria)} ${esc(c.kategoria)} &middot; ${formatujStawke(c.stawka, c.jednostka)}</div>
         </div>
         <button class="btn-usun" data-usun="${c.id}" aria-label="Usuń" title="Usuń">🗑</button>
       </div>
     `).join('');
 
-  app.innerHTML = `
-    <div class="uwaga">To Twoje domyślne stawki — wybierasz je przy dodawaniu pozycji do kosztorysu. Stuknij pozycję, żeby zmienić jej stawkę na stałe.</div>
-    <div class="karta">${listaHtml}</div>
-    <button class="btn" id="btn-nowa-pozycja-cennika">+ Dodaj czynność do cennika</button>
-  `;
-
-  document.getElementById('btn-nowa-pozycja-cennika').addEventListener('click', () => dialogPozycjaCennika());
-  app.querySelectorAll('[data-edytuj]').forEach((el) => {
+  kontener.querySelectorAll('[data-edytuj]').forEach((el) => {
     el.addEventListener('click', () => {
-      const pozycja = cennik.find((c) => c.id === el.dataset.edytuj);
+      const pozycja = cennikPamiec.find((c) => c.id === el.dataset.edytuj);
       dialogPozycjaCennika(pozycja);
     });
   });
-  app.querySelectorAll('[data-usun]').forEach((btn) => {
+  kontener.querySelectorAll('[data-usun]').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       await usunPozycjeCennika(btn.dataset.usun);
@@ -376,7 +593,8 @@ async function renderCennik() {
 }
 
 async function dialogPozycjaCennika(edytowanaPozycja = null) {
-  const kategorie = await pobierzKategorie();
+  const kategorieWszystkie = await pobierzKategorie();
+  const kategorie = kategorieWidoczne(kategorieWszystkie, edytowanaPozycja?.kategoria);
   const edycja = !!edytowanaPozycja;
   otworzDialog(`
     <h2>${edycja ? 'Edytuj stawkę' : 'Nowa czynność w cenniku'}</h2>
@@ -387,7 +605,7 @@ async function dialogPozycjaCennika(edytowanaPozycja = null) {
     <div class="pole">
       <label for="pole-kategoria">Kategoria</label>
       <select id="pole-kategoria">
-        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${edytowanaPozycja?.kategoria === k.nazwa ? 'selected' : ''}>${esc(k.nazwa)}</option>`).join('')}
+        ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${edytowanaPozycja?.kategoria === k.nazwa ? 'selected' : ''}>${ikonaKategorii(k.nazwa)} ${esc(k.nazwa)}</option>`).join('')}
       </select>
     </div>
     <div class="pole">
@@ -422,6 +640,78 @@ async function dialogPozycjaCennika(edytowanaPozycja = null) {
     }
     zamknijDialog();
     renderCennik();
+  });
+}
+
+// ---------- Widok: Ustawienia ----------
+
+async function renderUstawienia() {
+  topbarTitle.textContent = 'Ustawienia';
+  const [kategorie, firma] = await Promise.all([pobierzKategorie(), pobierzDaneFirmy()]);
+
+  app.innerHTML = `
+    <div class="karta">
+      <h3 class="sekcja-tytul">Dane firmy (widoczne na wydruku)</h3>
+      <div class="pole">
+        <label for="pole-firma-nazwa">Nazwa firmy / imię i nazwisko</label>
+        <input id="pole-firma-nazwa" type="text" value="${esc(firma.nazwa)}" />
+      </div>
+      <div class="pole">
+        <label for="pole-firma-telefon">Telefon</label>
+        <input id="pole-firma-telefon" type="text" value="${esc(firma.telefon)}" />
+      </div>
+      <div class="pole">
+        <label for="pole-firma-email">E-mail</label>
+        <input id="pole-firma-email" type="text" value="${esc(firma.email)}" />
+      </div>
+      <button class="btn" id="btn-zapisz-firme">Zapisz dane firmy</button>
+    </div>
+
+    <div class="karta">
+      <h3 class="sekcja-tytul">Kategorie</h3>
+      <div class="lista-kategorii">
+        ${kategorie.map((k) => `
+          <div class="wiersz-kategorii">
+            <span>${ikonaKategorii(k.nazwa)} ${esc(k.nazwa)}</span>
+            <button class="btn wtorny maly" data-toggle-kategoria="${k.id}">${k.ukryta ? 'Pokaż' : 'Ukryj'}</button>
+          </div>
+        `).join('')}
+      </div>
+      <div class="pole" style="margin-top:14px;">
+        <label for="pole-nowa-kategoria">Nowa kategoria</label>
+        <div style="display:flex; gap:8px;">
+          <input id="pole-nowa-kategoria" type="text" placeholder="np. Ogród / Taras" style="flex:1;" />
+          <button class="btn maly" id="btn-dodaj-kategorie">Dodaj</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btn-zapisz-firme').addEventListener('click', async (e) => {
+    await zapiszDaneFirmy({
+      nazwa: document.getElementById('pole-firma-nazwa').value,
+      telefon: document.getElementById('pole-firma-telefon').value,
+      email: document.getElementById('pole-firma-email').value,
+    });
+    const btn = e.target;
+    const tekstOryginalny = btn.textContent;
+    btn.textContent = 'Zapisano ✓';
+    setTimeout(() => { btn.textContent = tekstOryginalny; }, 1500);
+  });
+
+  document.getElementById('btn-dodaj-kategorie').addEventListener('click', async () => {
+    const nazwa = document.getElementById('pole-nowa-kategoria').value.trim();
+    if (!nazwa) return;
+    await dodajKategorie(nazwa);
+    renderUstawienia();
+  });
+
+  app.querySelectorAll('[data-toggle-kategoria]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const kategoria = kategorie.find((k) => k.id === btn.dataset.toggleKategoria);
+      await aktualizujKategorie({ ...kategoria, ukryta: !kategoria.ukryta });
+      renderUstawienia();
+    });
   });
 }
 
