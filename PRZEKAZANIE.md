@@ -92,6 +92,13 @@ czynność" poprawnie pokazuje **14 grup / 60 opcji**. Dla realnego docelowego
 użytkownika (czysty telefon, nigdy nie uruchamiał appki) to bez znaczenia —
 jego baza i tak wystartuje pusta i dostanie czyste 14 kategorii od razu.
 
+Po wgraniu poprawki (commit `e558053`, cache `majster-v3`) wyczyściłem
+**własne** dane testowe na produkcji (`krupek304.github.io/majster`) —
+service worker, cache i IndexedDB — i zweryfikowałem stan od zera: **14
+kategorii / 60 podkategorii**, dropdown "Typowa czynność" 14 grup, test
+15 m² × 90 zł → **1350,00 zł** (zgodne). Produkcja jest teraz w dokładnie
+takim stanie, w jakim zobaczy ją kolega przy pierwszym otwarciu.
+
 Test end-to-end w przeglądarce (Browser pane, viewport mobilny 375×812):
 - Dodano 2 pozycje do cennika, potem do kosztorysu (20 m² × 45 zł,
   60 m² × 12,50 zł) → **przed: 0 zł / po: 1650,00 zł** (900 + 750,
