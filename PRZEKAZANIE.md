@@ -7,6 +7,11 @@ Działający MVP: aplikacja PWA do budowania kosztorysu prac remontowych
 całkowita, eksport CSV, wydruk/PDF przez przeglądarkę). Zero backendu,
 zero kosztów, wszystko lokalnie w IndexedDB na urządzeniu.
 
+**Wdrożona i działająca pod adresem: https://krupek304.github.io/majster/**
+(GitHub Pages, repozytorium publiczne `krupek304/majster`, branch `main`,
+HTTPS wymuszony przez GitHub). To jest adres do otwarcia na iPhonie i
+dodania do ekranu głównego (Safari → Udostępnij → Dodaj do ekranu głównego).
+
 ## Model danych (patrz MAPA.md → js/db.js)
 
 - **Projekt** = jedno zlecenie/mieszkanie, ma własną listę pozycji.
@@ -65,35 +70,40 @@ Test end-to-end w przeglądarce (Browser pane, viewport mobilny 375×812):
 - Usuwanie projektu kasuje też jego pozycje (sprawdzone: lista wraca
   do stanu pustego).
 
+Powtórzony smoke test na **produkcyjnym adresie** (https://krupek304.github.io/majster/,
+prawdziwe HTTPS, nie lokalny serwer): manifest wczytuje się poprawnie
+(`manifestOk: true`), service worker zainstalował się i ma status
+`activated`, `Cache Storage` zawiera `majster-v1`. Dodanie pozycji
+4 szt. × 100 zł → **po: 400,00 zł** (zgodne). Dane testowe usunięte
+po teście.
+
 ## Czego NIE udało się sprawdzić
 
-- **Rzeczywiste działanie na iPhone** — testowałem w Browser pane
-  (silnik przeglądarki na tym komputerze) z emulacją viewportu mobilnego,
-  nie na fizycznym urządzeniu. Nie sprawdziłem: jak `<dialog>` zachowuje
-  się z klawiaturą ekranową iOS, czy "Dodaj do ekranu głównego" faktycznie
-  poprawnie zainstaluje ikonę i uruchomi appkę w trybie `standalone`.
+- **Rzeczywiste działanie na fizycznym iPhone** — testowałem w Browser
+  pane (silnik przeglądarki na tym komputerze, w tym pod prawdziwym
+  produkcyjnym HTTPS) z emulacją viewportu mobilnego, nie na fizycznym
+  urządzeniu. Nie sprawdziłem: jak `<dialog>` zachowuje się z klawiaturą
+  ekranową iOS, czy "Dodaj do ekranu głównego" faktycznie poprawnie
+  zainstaluje ikonę i uruchomi appkę w trybie `standalone` na iOS Safari.
 - **Wydruk/eksport do PDF** — sekcja `@media print` w CSS jest napisana
   i logicznie poprawna (ukrywa nawigację i przyciski, pokazuje czysty
   układ kosztorysu), ale nie zweryfikowałem jej wizualnie — wymaga
   natywnego dialogu drukowania, którego nie da się w pełni sprawdzić
   w tym narzędziu.
-- **Prawdziwe działanie offline** (tryb samolotowy) — sprawdziłem tylko,
-  że `Cache Storage` zawiera wszystkie pliki; nie testowałem realnego
-  wyłączenia sieci i przeładowania strony.
-- **Hosting produkcyjny** — appka działa teraz tylko lokalnie
-  (`python -m http.server`). Nie wdrożono jej jeszcze na żaden darmowy
-  hosting (Cloudflare Pages / GitHub Pages) — to następny krok do zrobienia
-  razem z użytkownikiem (wymaga jego konta na wybranej platformie).
+- **Prawdziwe działanie offline** (tryb samolotowy) na iPhonie — na
+  komputerze sprawdziłem tylko, że `Cache Storage` zawiera wszystkie
+  pliki; nie testowałem realnego wyłączenia sieci na urządzeniu mobilnym.
 - **Instalacja na drugim folderze** (`D:\Zainstalowane aplikacje z Claude\Majster`)
   — folder utworzony, ale pusty; kopiowanie działającej wersji nie zostało
   jeszcze zrobione (czekam, aż wersja będzie stabilna po realnym teście
-  na iPhone).
+  na iPhone kolegi użytkownika — patrz pamięć: docelowy użytkownik appki
+  to fachowiec-kolega, nie sam deweloper).
 
 ## Co zostaje otwarte
 
-- Realny test na iPhone: dodanie do ekranu głównego, sprawdzenie ikony,
-  trybu pełnoekranowego, wygody wpisywania na dotyk.
-- Wybór i konfiguracja darmowego hostingu (Cloudflare Pages / GitHub Pages).
+- Realny test na iPhone (najlepiej od razu na telefonie kolegi-fachowca,
+  bo to on będzie docelowym użytkownikiem): dodanie do ekranu głównego,
+  sprawdzenie ikony, trybu pełnoekranowego, wygody wpisywania na dotyk.
 - Edycja istniejącej pozycji kosztorysu / cennika (na razie jest tylko
   dodawanie i usuwanie — funkcje `aktualizujPozycjeKosztorysu` i
   `aktualizujPozycjeCennika` w `db.js` już istnieją, ale UI do edycji
