@@ -395,6 +395,246 @@ całych pomieszczeń, onboarding, zapamiętywanie ostatniej ilości.
   przy zmianie zakładek (sprawdzone: przełączenie Cennik → Projekty nie
   otworzyło dialogu drugi raz).
 
+### Runda: przegląd całego kodu pod kątem błędów (2026-09-27)
+
+**Uwaga o luce w tym pliku:** między "Rundą 5" wyżej a tą sekcją miało miejsce
+sporo niezanotowanej tu pracy w tej samej długiej sesji (zakładka Podsumowanie
+miesięczne/roczne, zdjęcia do pozycji kosztorysu, powiadomienia o zbliżającym
+się/rozpoczynającym projekcie, ikony statusów, skeleton loading, komunikat o
+prywatności, nowy efekt zakończenia projektu, usunięcie CSV/konfetti) — nie
+zostało to tu opisane wcześniej z braku czasu na koniec tamtych podsesji.
+`js/app.js` ma teraz ~1900 linii, `js/db.js` ~890 — numery linii w sekcjach
+"Runda 1-5" wyżej i w `MAPA.md` są przez to **nieaktualne**. `MAPA.md` wymaga
+pełnego odświeżenia przy najbliższej okazji (nie zrobione w tej rundzie -
+zbyt duży, osobny nakład pracy, żeby zrobić to rzetelnie przy okazji audytu
+błędów).
+
+Na wyraźną prośbę użytkownika ("sprawdź cały kod pod kątem błędów, luk itd. i
+napraw je wszystkie") przeprowadzony pełny przegląd `js/app.js`, `js/db.js`,
+`js/calc.js`, `sw.js`, `index.html` przez 6 niezależnych "kątów" (poprawność
+w app.js, poprawność w db.js/calc.js, spójność między plikami, redukcja
+duplikacji, wydajność, zgodność z CLAUDE.md + PWA/offline). Każde zgłoszenie
+zweryfikowane osobiście czytaniem kodu przed naprawą (nie na słowo agenta).
+
+**Naprawione, z liczbami:**
+
+- `duplikujProjekt` nie ustawiał `data_rozpoczecia`/`data_zakonczenia` (w
+  przeciwieństwie do `dodajProjekt`) i nadawał wszystkim skopiowanym pozycjom
+  identyczny znacznik czasu, PLUS pobierał je bez sortowania po `data` przed
+  nadaniem nowych znaczników (błąd znaleziony DRUGI RAZ, we własnej pierwszej
+  poprawce). Test: duplikat 3 pozycji A/B/C → **przed poprawką kolejność
+  B/A/C (losowa), po poprawce A/B/C** (zgodna z oryginałem); `data_rozpoczecia`
+  duplikatu: **przed `undefined`, po `2026-09-27`**.
+- `esc()` (używany też w atrybutach HTML) nie escapował cudzysłowu - potencjalne
+  wstrzyknięcie atrybutu (np. przez zaimportowaną od kogoś innego kopię
+  zapasową). Test: `esc('x" onfocus="..." autofocus="x')` → teraz
+  `x&quot; onfocus=...` (nieszkodliwy tekst), sprawdzone też na żywo w polu
+  szukania projektów - atrybut `value` ma teraz dokładnie **5 atrybutów**
+  (bez wstrzykniętych dodatkowych), a normalny tekst z polskimi znakami i `&`
+  nadal wyświetla się poprawnie.
+- Usunięcie kategorii domyślnej "na stałe" (`usunKategorieRazemZCennikiem`)
+  wracało samo po zamknięciu i otwarciu appki, bo `zapewnijDaneStartowe`
+  dogrywało brakujące domyślne kategorie po nazwie bez pamiętania, że to było
+  świadome usunięcie. Naprawione przez listę "usuniętych na stałe" w
+  `ustawienia`. Test: **14→13 kategorii po usunięciu, nadal 13 po symulacji
+  restartu appki** (przed poprawką wracało do 14); reset "Przywróć domyślny
+  cennik" poprawnie czyści tę listę i przywraca **14/14**.
+- Podwójne kliknięcie "Usuń" (wpłata / pozycja cennika / pozycja kosztorysu)
+  rzucało nieobsłużony `TypeError`, bo drugi klik trafiał już nieistniejący
+  rekord. Naprawione warunkiem przed pokazaniem toasta "Cofnij". Test: dwa
+  kolejne wywołania `usunPlatnosc` na tym samym id → **pierwsze zwraca
+  obiekt, drugie `undefined` (jak oczekiwano), bez wyjątku**.
+- Service worker cache'ował KAŻDĄ odpowiedź (także 404/500) jako poprawną, a
+  fallback przy braku sieci i braku cache zwracał zawsze `undefined` zamiast
+  sensownej odpowiedzi. Naprawione: cache tylko `odpowiedz.ok`, offline
+  fallback dla nawigacji podstawia zapisaną `index.html`.
+- `zapiszDaneFirmy`/`zapiszLogoFirmy` (zmiana telefonu vs wybór logo tuż po
+  sobie) mogły się cicho nadpisywać (ten zapis, co skończy się jako drugi,
+  wygrywa całym rekordem). Naprawione kolejkowaniem zapisów w jedną sekwencję.
+- Fallback daty rozpoczęcia projektu (`dataRozpoczeciaProjektu`, dla starych
+  projektów bez pola) liczył datę z `data_utworzenia` przez ucięcie stringa
+  ISO (czas UTC) zamiast przeliczenia na czas lokalny - ta sama klasa błędu,
+  którą `dzisiajYMD()` miał wcześniej wyeliminować, wróciła w nowym miejscu.
+  Naprawione nowym `ymdLokalny()`.
+- Wyłączone pole kategorii w "Nowa pozycja" nie miało domyślnej opcji, więc
+  przy ręcznie wpisanej (nie z cennika) czynności przeglądarka cicho zapisywała
+  PIERWSZĄ kategorię z listy. Test: **przed poprawką kategoria = nazwa
+  pierwszej kategorii na liście, po poprawce kategoria = `""` (Bez kategorii)**
+  - wybór z cennika (główna ścieżka) nadal poprawnie ustawia prawdziwą kategorię
+  (sprawdzone: `"Przygotowanie i planowanie"` po wyborze pozycji z cennika).
+- Data wpłaty parsowana przez `new Date(p.data)` bez `T00:00:00` (jedyne
+  takie miejsce w pliku) - ujednolicone z `formatujDateYMD`.
+- Dodatkowo (mniejsze, przy okazji): kolizja `kolejnosc` kategorii po
+  usunięciu jednej z nich (`.length` zamiast max+1 - ten sam błąd, co
+  `dodajKategorie` już wcześniej naprawił gdzie indziej); kaskadowe usuwanie
+  projektu/pozycji/kategorii teraz w JEDNEJ transakcji IndexedDB (atomowe -
+  przerwanie w trakcie nie zostawia częściowo skasowanych danych) przez nowy
+  helper `withStores`; import kopii zapasowej z brakującym polem `data` w
+  pozycji nie wywala już całego widoku kosztorysu (dogrywa bezpieczną wartość
+  zamiast rzucać wyjątkiem przy sortowaniu); `eksportujCalaBaze` czyta 7
+  store'ów równolegle zamiast po kolei; lista Projektów i zakładka Podsumowanie
+  liczą sumy projektów przez JEDNO zbiorcze zapytanie zamiast osobnego na
+  każdy projekt (zweryfikowane: wyniki identyczne co do grosza z metodą
+  poprzednią, na 3 testowych projektach: 46,16 / 99,95 / 0,00 zł).
+- **Świadomie NIE zmienione** (sprawdzone, że to nie błąd): `stawka: 0` jako
+  "stawka nieustalona" - to udokumentowana, zamierzona konwencja tego cennika
+  (11 pozycji celowo bez sensownej jednej ceny), nie pomyłka.
+
+Wszystkie zmiany: `node --check` bez błędów na `app.js`/`db.js`/`sw.js`/
+`calc.js`, `node js/calc.test.mjs` **16/16 OK** przed i po każdej grupie
+zmian, dane testowe utworzone do weryfikacji usunięte po sobie (środowisko
+testowe w Browser pane wróciło do 0 projektów / 14 kategorii domyślnych).
+
+### Runda: bezpieczeństwo danych lokalnych (2026-09-27, po przeglądzie błędów)
+
+Na prośbę użytkownika ("zadbajmy o kwestie bezpieczeństwa... skoro wszystko
+zapisuje się tylko na telefonie i żadne dane nie są w internecie") - diagnoza
+wykazała brak nagłówka CSP, brak limitów długości pól tekstowych, brak limitu
+rozmiaru plików (zdjęcia/logo/import), i import kopii zapasowej działający
+BEZ żadnego potwierdzenia (jedno stuknięcie w zły plik = ciche scalenie/
+nadpisanie danych). Zapytany o blokadę PIN (jedyne realne zabezpieczenie na
+wypadek zgubionego/udostępnionego telefonu) - użytkownik nie miał preferencji,
+więc zgodnie z rekomendacją (redukuje ryzyko utraty danych) **PIN NIE został
+zbudowany** - to zostaje otwarte, do ponownego rozważenia jeśli scenariusz
+"ktoś inny bierze telefon do ręki" stanie się realny.
+
+Wdrożone:
+
+- **Content-Security-Policy** (`index.html`, meta tag) - `script-src 'self'`
+  (bez `'unsafe-inline'`) jako druga warstwa obrony obok poprawki `esc()` z
+  poprzedniej rundy: nawet gdyby jakieś przyszłe miejsce w kodzie zapomniało
+  escapować tekst użytkownika, wstrzyknięty `onfocus="..."` czy `<script>`
+  i tak by się nie wykonał. Wymagało wydzielenia jedynego inline `<script>`
+  (wykrywanie zapisanego motywu) do osobnego pliku `js/motyw.js` (CSP bez
+  `'unsafe-inline'` blokuje TAKŻE inline skrypty, nawet własne, nieszkodliwe).
+- **`maxlength` na wszystkich polach tekstowych** zapisywanych do bazy (nazwa
+  projektu/pozycji/klient/pomieszczenie/opis wpłaty/dane firmy/nazwa
+  kategorii) - 100-200 znaków zależnie od pola, żeby absurdalnie długi wklejony
+  tekst (przypadkiem albo przez uszkodzony import) nie rozdymał bazy ani nie
+  spowalniał renderowania list.
+- **Limit rozmiaru pliku zdjęcia/logo** (20 MB) sprawdzany PRZED próbą
+  zdekodowania jako obraz - bardzo duży/wadliwy plik (np. pomyłkowo wybrane
+  wideo) potrafił wcześniej zawiesić kartę na słabszym telefonie.
+- **Potwierdzenie przed importem kopii zapasowej** ("Import scali dane...
+  Kontynuować?") + limit rozmiaru pliku (50 MB) przed próbą `JSON.parse` -
+  wcześniej jedno stuknięcie w zły plik natychmiast, bez ostrzeżenia, scalało
+  cennik/kategorie i NADPISYWAŁO projekty/pozycje/płatności o tych samych ID.
+
+Sprawdzone i uznane za NIEobecne zagrożenia (bez zmian): zero wywołań
+`fetch`/`XHR`/`eval`/`Function`/`document.write` w całym `js/`, zero
+zewnętrznych linków (`target="_blank"`), pliki `<input type="file">` mają
+`accept="image/*"`/`"application/json"`, manifest i service worker poprawne.
+
+**Zweryfikowane w przeglądarce:** CSP nie zablokowało niczego (SW nadal się
+rejestruje, `motyw.js` nadal ustawia tryb ciemny/jasny przed narysowaniem
+strony, wszystkie dialogi/ikony/style inline działają, brak jakiegokolwiek
+komunikatu "Refused to..." w konsoli w całej sesji testowej); `maxlength`
+potwierdzony na polu nazwy projektu (200); potwierdzenie importu przetestowane
+programowo w obie strony (Anuluj → import się nie wykonuje, pole czyszczone;
+OK → import przechodzi normalnie, dokładnie jak wcześniej). `node --check`
+bez błędów na wszystkich plikach, `calc.test.mjs` 16/16 OK. `sw.js` →
+`CACHE_NAZWA` na `majster-v28` (dodany `js/motyw.js` do listy cache).
+
+### Runda: przypomnienie o kopii zapasowej + podpowiedź instalacji (2026-09-27)
+
+Na pytanie "co jeszcze wymaga usprawnienia" wymieniłem 5 rzeczy, użytkownik
+wybrał 2 z nich do wdrożenia:
+
+- **Przypomnienie o kopii zapasowej** (`js/app.js`, `sprawdzPrzypomnienieKopii`,
+  wywoływane przy starcie appki obok istniejącego sprawdzania powiadomień o
+  projektach). Jeśli jest choć 1 projekt i minęło ≥14 dni od ostatniego
+  eksportu (albo nigdy go nie było) - dodaje powiadomienie do istniejącego
+  dzwonka (nie nowy UI). Data ostatniego eksportu w `localStorage`
+  (`o-majster-ostatni-eksport`, ustawiana w handlerze "Eksportuj kopię
+  zapasową") - świadomie NIE w bazie/kopii zapasowej, bo to fakt o TYM
+  urządzeniu, nie o samych danych (po przywróceniu na nowym telefonie appka
+  słusznie "nie pamięta" żadnego eksportu stąd). Deduplikacja: nie dodaje
+  drugiego przypomnienia, jeśli poprzednie jest młodsze niż 14 dni.
+  Zweryfikowane liczbami: świeży projekt bez eksportu → **0→1** powiadomień
+  typu `kopia-zapasowa` po starcie appki, **nadal 1** po dwóch kolejnych
+  przeładowaniach (bez duplikatu), treść poprawnie widoczna w liście
+  powiadomień w UI.
+- **Podpowiedź "dodaj do ekranu głównego"** (`js/app.js`, baner na górze
+  listy Projektów, `css/style.css` klasa `.uwaga-instalacja`). Android/Chrome:
+  przechwycone `beforeinstallprompt` → prawdziwy przycisk "Zainstaluj"
+  wywołujący natywny prompt. **iOS Safari nie wspiera tego API w ogóle**
+  (celowe ograniczenie Apple) - tam appka pokazuje samą instrukcję
+  ("Udostępnij → Dodaj do ekranu głównego") bez przycisku, bo nie da się tego
+  zautomatyzować. Trwałe zamknięcie (przycisk "x") zapisuje się w
+  `localStorage` (`o-majster-instalacja-ukryta`) i baner już nigdy więcej się
+  nie pojawia na tym urządzeniu, nawet gdy przeglądarka ponownie zaoferuje
+  `beforeinstallprompt`. Zweryfikowane przez symulację zdarzenia
+  `beforeinstallprompt` w konsoli: baner pojawia się z przyciskiem, klik
+  wywołuje `prompt()` i chowa baner; klik "x" trwale ukrywa (potwierdzone po
+  przeładowaniu strony i ponownym zdarzeniu - baner się nie pojawił).
+
+`node --check` bez błędów, `calc.test.mjs` 16/16 OK, `sw.js` →
+`CACHE_NAZWA` na `majster-v29`.
+
+### Runda: wizualizacje i animacje (2026-09-27)
+
+Na prośbę "wprowadź wszystkie" (z 6 wcześniej zaproponowanych pomysłów: 3
+wizualne + 3 animacje) wdrożone wszystkie, plus przy okazji znalezione i
+naprawione 2 błędy.
+
+**Wizualizacje:**
+- **Wykres trendu wpłat** (12 słupków CSS, widok roczny Podsumowania) -
+  wysokość liczona względem najwyższego miesiąca w roku. Zweryfikowany
+  liczbami: wpłaty 1200/2500/500/800 zł w czerwcu-wrześniu → wysokości
+  słupków 48%/100%/20%/32% (dokładnie zgodne, licząc względem max=2500).
+- **Donut zamiast poziomego paska** w podziale kosztów wg kategorii
+  (kosztorys) - rysowany ręcznie SVG (`stroke-dasharray`/`dashoffset` na
+  okręgach), bez biblioteki wykresów. Zweryfikowany na 3 kategoriach
+  (650/880/660 zł z sumy 2190) → segmenty 30%/40%/30%, etykieta w środku
+  "3 KATEGORIE" (poprawna polska odmiana).
+- **Pasek postępu wpłat na karcie projektu** - zielony pasek pod nazwą
+  klienta, szerokość = zapłacono/suma. Zweryfikowany: 800 zł z 2190 zł →
+  36,5% (dokładnie zgodne), widoczny wizualnie na liście.
+
+**Animacje:**
+- **Count-up rozszerzony na Podsumowanie** (`animujKwote`, wcześniej tylko
+  suma kosztorysu) - suma "Wpłacono w {rok/miesiąc}" animuje się przy każdej
+  zmianie okresu. Zweryfikowane przez próbkowanie w trakcie animacji:
+  5000→2696→1223→417→76→1→0 zł (poprawna krzywa ease-out, kończy na
+  dokładnej wartości docelowej).
+- **Wzrost słupków/paska/donuta od zera** (`@starting-style`, ten sam wzorzec
+  co istniejące już "wjechanie" pozycji na liście).
+- **Mikro-feedback dotyku rozszerzony** na elementy, które go nie miały:
+  karty projektów (`.karta-projekt`, wcześniej zero reakcji na dotyk),
+  wiersze pozycji (`.pozycja`, miały już zmianę tła, dodane `scale(0.98)`),
+  przyciski nawigacji okresu. Sam mechanizm (`transform: scale()` na
+  `:active`) już istniał wcześniej dla `.btn`/`.btn-segment`/`.tab-btn` -
+  rozszerzony na elementy, które go nie miały, a nie wymyślony od nowa.
+
+**Błędy znalezione i naprawione przy okazji (na prośbę "sprawdź kod i
+napraw"):**
+1. `duplikujProjekt` z poprzedniej rundy nadal miał błąd: pobierał pozycje
+   do skopiowania BEZ sortowania po `data` przed nadaniem nowych znaczników
+   czasu (`getAll` po indeksie zwraca kolejność wg losowego UUID, nie wg
+   `data`) - kolejność pozycji w duplikacie nadal była losowa mimo
+   wcześniejszej "naprawy" unikalnych znaczników czasu. Test: A/B/C →
+   przed poprawką B/A/C, po poprawce A/B/C.
+2. Donut (etykieta środkowa) i cała trójka `odmienDni`/`odmienProjekty`/
+   `odmienPozycje` miały identyczny, trzykrotnie skopiowany algorytm polskiej
+   odmiany - scalone do jednej funkcji `odmien(n, jeden, kilka, wiele)`,
+   przy okazji naprawiając błędną (dwuwariantową zamiast trzywariantowej)
+   odmianę w nowej etykiedzie donuta. Zweryfikowane na 20 przypadkach
+   brzegowych (0, 1, 2-4, 5-21, 12-14, 22, 100+) - wszystkie gramatycznie
+   poprawne.
+3. **Donut na wydruku/PDF byłby nieczytelny w trybie ciemnym** - używał
+   zmiennych motywu (`--linia`/`--tekst`/`--tekst-slaby`), które w trybie
+   ciemnym są jasne, a strona przy druku wymusza białe tło (`body{background:
+   white}` w `@media print`) - jasny tekst na białej kartce = niewidoczny.
+   Naprawione tym samym wzorcem, którego appka już używa dla innych
+   elementów przy druku (`color: black` wprost w bloku `@media print`).
+   Przy okazji naprawiony też PRE-ISTNIEJĄCY, nigdy wcześniej niezauważony
+   ten sam problem w legendzie (`.legenda`) - istniał od czasu wprowadzenia
+   paska podziału kosztów, niezależnie od tej rundy.
+
+`node --check` bez błędów, `calc.test.mjs` 16/16 OK, wszystko zweryfikowane
+liczbami w przeglądarce, dane testowe posprzątane. `sw.js` → `CACHE_NAZWA`
+na `majster-v30`.
+
 ## Czego NIE udało się sprawdzić
 
 - **Rzeczywiste działanie na fizycznym iPhone** — testowałem w Browser
@@ -452,6 +692,62 @@ całych pomieszczeń, onboarding, zapamiętywanie ostatniej ilości.
   4 szablonów naraz: wszystkie **22 wpisy w 4 szablonach mają dokładne
   odpowiedniki w cenniku, 0 literówek/rozjazdów** — więc żadna pozycja nie
   zostanie po cichu pominięta przy dodawaniu żadnego z 4 szablonów.
+
+Do rundy wizualizacji/animacji (2026-09-27) dodatkowo:
+
+- **Wydruk/PDF z poprawką donuta** - sprawdzona tylko czytaniem CSS (kolory
+  wymuszone na czarny w `@media print`), NIE przez faktyczne otwarcie natywnego
+  dialogu drukowania (jak w każdej wcześniejszej rundzie - to ograniczenie
+  tego narzędzia, nie zmieniło się).
+- **Wygląd donuta/wykresu na wąskim ekranie telefonu** (nie tylko w
+  Browser pane na komputerze) - nie testowane na fizycznym urządzeniu,
+  podobnie jak reszta appki.
+
+Do rundy przypomnienia o kopii/instalacji (2026-09-27) dodatkowo:
+
+- **Prawdziwe `beforeinstallprompt` na Android Chrome** - przetestowane tylko
+  przez symulację (ręcznie skonstruowany `Event`), nie przez faktyczne
+  spełnienie kryteriów instalowalności Chrome i odczekanie na prawdziwe
+  zdarzenie przeglądarki. Logika obsługi zdarzenia powinna być identyczna,
+  ale nie potwierdzone na prawdziwym Androidzie.
+- **Instrukcja dla iOS Safari** - sprawdzona tylko czytaniem kodu
+  (`czyIOS()` przez `navigator.userAgent`) - nie na faktycznym iPhonie
+  (środowisko testowe to Chromium na komputerze, `czyIOS()` tam zawsze
+  zwraca `false`, więc ta gałąź w ogóle się nie uruchomiła w testach).
+
+Do rundy bezpieczeństwa (2026-09-27) dodatkowo:
+
+- **Limit 20 MB na zdjęcia/logo** sprawdzony tylko czytaniem kodu (warunek
+  `plik.size > ...`) - nie wygenerowałem faktycznego pliku >20 MB, żeby
+  zobaczyć realny komunikat błędu w UI.
+- **CSP na prawdziwym `https://krupek304.github.io/o-majster/` i na
+  faktycznym iPhone Safari** - zweryfikowane tylko w lokalnym Browser pane
+  (`http://localhost`). Meta-tag CSP powinien działać identycznie wszędzie,
+  ale nie potwierdziłem tego na docelowym urządzeniu/hostingu.
+- **PIN/blokada aplikacji NIE zbudowana** (decyzja: brak preferencji
+  użytkownika → poszedłem za rekomendacją "nie teraz") - jeśli telefon
+  bywa dostępny dla innych osób, warto to rozważyć ponownie.
+
+Do przeglądu 2026-09-27 (błędy z kodu) dodatkowo:
+
+- **Realne "offline" zachowanie service workera po poprawce fetch handlera**
+  (cache tylko `.ok`, fallback nawigacji do `index.html`) - sprawdzone tylko
+  logicznie i przez brak błędów w konsoli przy normalnym korzystaniu; nie
+  testowałem faktycznego wyłączenia sieci (tryb samolotowy/DevTools offline)
+  na żadnym z dwóch nowych fragmentów kodu.
+- **Wyścig `zapiszDaneFirmy`/`zapiszLogoFirmy`** naprawiony przez kolejkowanie
+  zapisów, ale nie odtworzyłem faktycznego równoległego wywołania obu naraz
+  (trudne do wiarygodnego wymuszenia w teście) - poprawka zweryfikowana tylko
+  przez czytanie kodu (kolejka gwarantuje serializację z definicji), nie
+  przez zmierzony przypadek wyścigu przed/po.
+- **Reszta zgłoszonych podczas przeglądu usprawnień (nie błędów) NIE została
+  wdrożona** - celowo pominięta jako zmiana kosmetyczna/wydajnościowa bez
+  wpływu na poprawność: duplikacja `odmienProjekty`/`odmienPozycje`, brak
+  indeksu `projekt_id` na store `zdjecia` (pełne skanowanie wszystkich zdjęć
+  w appce przy każdym wejściu w kosztorys - wymagałoby bumpa wersji bazy),
+  O(12×N) przeliczanie widoku rocznego w Podsumowaniu, duplikacja stylu CSS
+  przycisków-ikon.
+- **`MAPA.md` nieaktualny** (patrz uwaga wyżej) - nie odświeżony w tej rundzie.
 
 ## Co zostaje otwarte
 

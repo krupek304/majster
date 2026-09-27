@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>O!Majster</title>
-  <script>
-    // Ustawia wymuszony motyw PRZED narysowaniem strony, żeby nie mignęło złym
-    // kolorem (np. jasny na ułamek sekundy, mimo że wybrany jest ciemny).
-    try {
-      var zapisanyMotyw = localStorage.getItem('o-majster-motyw');
-      if (zapisanyMotyw === 'jasny' || zapisanyMotyw === 'ciemny') {
-        document.documentElement.setAttribute('data-motyw', zapisanyMotyw);
-      }
-    } catch (e) {}
-  </script>
+  <!-- Zero zewnętrznych zasobów (fonty/ikony samohostowane, brak CDN, brak
+       sieci) - CSP blokuje wszystko poza własnym originem. script-src bez
+       'unsafe-inline' i bez inline event-handlerów w kodzie oznacza, że
+       nawet wstrzyknięty przez XSS atrybut typu onfocus="..." nie wykona się
+       (druga warstwa obrony obok escapowania w esc(), na wypadek gdyby
+       jakieś przyszłe miejsce zapomniało go użyć). style-src ma
+       'unsafe-inline', bo appka szeroko używa inline style="..." (kolory
+       statusów, procenty paska podziału) - to nie jest wektor wykonania JS. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';" />
+  <script src="js/motyw.js"></script>
   <meta name="theme-color" content="#1e293b" id="meta-kolor-paska" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/icon-180.png" />

@@ -191,8 +191,19 @@ function pokazZakonczenieProjektu(projekt, pozycje) {
 }
 // "dzień/dni" ma tylko dwie formy w polskim (nie trzy jak np. "pozycja/-e/-i") -
 // 1 to zawsze "dzień", każda inna liczba (w tym 0) to "dni".
+// Polska odmiana liczebnikowa (1 / 2-4 / 5+, z wyjątkiem 12-14 które mimo
+// końcówki 2-4 idą do formy "wiele") - jeden wspólny algorytm zamiast
+// kopiowanego osobno dla każdego rzeczownika (odmienDni/odmienProjekty/
+// odmienPozycje różniły się kiedyś tylko słowami, ten sam kod trzy razy).
+function odmien(n, jeden, kilka, wiele) {
+  if (n === 1) return jeden;
+  const ostatniaCyfra = n % 10;
+  const ostatnieDwie = n % 100;
+  if (ostatniaCyfra >= 2 && ostatniaCyfra <= 4 && !(ostatnieDwie >= 12 && ostatnieDwie <= 14)) return kilka;
+  return wiele;
+}
 function odmienDni(n) {
-  return n === 1 ? 'dzień' : 'dni';
+  return odmien(n, 'dzień', 'dni', 'dni');
 }
 
 // ---------- Wygląd: jasny / ciemny / systemowy ----------
@@ -242,6 +253,11 @@ if (window.matchMedia) {
   });
 }
 
+// Data ostatniego eksportu kopii zapasowej - lokalny fakt o tym urządzeniu
+// (nie o samych danych), stąd localStorage, nie baza: po przywróceniu kopii
+// na nowym telefonie appka słusznie "nie pamięta" żadnego eksportu stąd.
+const KLUCZ_OSTATNIEGO_EKSPORTU = 'o-majster-ostatni-eksport';
+
 // Zapamiętywanie ostatnio wpisanej ilości dla danej pozycji cennika - czysto
 // lokalna wygoda urządzenia (nie dane biznesowe), stąd localStorage a nie baza.
 const KLUCZ_OSTATNICH_ILOSCI = 'o-majster-ostatnie-ilosci';
@@ -267,23 +283,38 @@ function zapamietajIlosc(cennikId, ilosc) {
 // bo ta konwertuje na UTC i potrafi cofnąć datę o dzień w nocy przy dodatniej
 // strefie czasowej (np. 00:30 w Polsce latem = 22:30 UTC dnia poprzedniego).
 // Znalezione empirycznie 2026-09-27 przy testowaniu powiadomień o datach.
-function dzisiajYMD() {
-  const d = new Date();
+function ymdLokalny(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+function dzisiajYMD() {
+  return ymdLokalny(new Date());
+}
 
+// Musi escapować TAKŻE cudzysłowy - wynik trafia nie tylko do tekstu węzła,
+// ale też do atrybutów w cudzysłowie (np. value="${esc(...)}"). Poprzednia
+// wersja (przez d.textContent -> d.innerHTML) escapowała tylko &<> - cudzysłów
+// w nazwie projektu/pozycji mógł zamknąć atrybut i wstrzyknąć nowy (np. przez
+// zaimportowaną od kogoś innego kopię zapasową).
 function esc(str) {
-  const d = document.createElement('div');
-  d.textContent = str ?? '';
-  return d.innerHTML;
+  return String(str ?? '').replace(/[&<>"']/g, (znak) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[znak]));
 }
 
 // ---------- Obrazy: logo firmy i zdjęcia pozycji ----------
 // Zdjęcie z aparatu telefonu potrafi mieć kilkanaście MB - zanim trafi do
 // IndexedDB, skalujemy je w dół przez <canvas>. Bez tego kilka zdjęć na
 // pozycję szybko napuchłoby bazę i spowolniło appkę.
+const MAX_ROZMIAR_OBRAZU_MB = 20;
 function wczytajObraz(plik) {
   return new Promise((resolve, reject) => {
+    // Sprawdzone PRZED odczytem - dekodowanie ogromnego/wadliwego pliku jako
+    // obrazu (np. przez pomyłkę wybrany plik wideo, albo bardzo wysokiej
+    // rozdzielczości zdjęcie) potrafi zawiesić kartę na słabszym telefonie.
+    if (plik.size > MAX_ROZMIAR_OBRAZU_MB * 1024 * 1024) {
+      reject(new Error(`Plik jest za duży (max ${MAX_ROZMIAR_OBRAZU_MB} MB).`));
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       const img = new Image();
@@ -420,15 +451,104 @@ function htmlSzkieletUstawienia() {
 
 let projektyPamiec = [];
 
+// Jedno zbiorcze pobranie WSZYSTKICH pozycji (zamiast osobnego zapytania na
+// każdy projekt z osobna) - przy M projektach to jedna transakcja IndexedDB
+// zamiast M. Kolejność pozycji w każdej grupie zostaje identyczna jak przy
+// odpytaniu przez indeks projekt_id (obie ścieżki sortują wg klucza głównego),
+// więc `sumaCalkowita` (liczy z zaokrągleniem krok po kroku) daje ten sam wynik.
+async function pozycjeWgProjektuMapa() {
+  const wszystkie = await pobierzWszystkiePozycjeKosztorysu();
+  const mapa = new Map();
+  for (const p of wszystkie) {
+    if (!mapa.has(p.projekt_id)) mapa.set(p.projekt_id, []);
+    mapa.get(p.projekt_id).push(p);
+  }
+  return mapa;
+}
+
+// Ten sam wzorzec co wyżej (jedno zbiorcze zapytanie zamiast osobnego na
+// każdy projekt) - do paska postępu wpłat na karcie projektu.
+async function platnosciWgProjektuMapa() {
+  const wszystkie = await pobierzWszystkiePlatnosci();
+  const mapa = new Map();
+  for (const p of wszystkie) {
+    if (!mapa.has(p.projekt_id)) mapa.set(p.projekt_id, []);
+    mapa.get(p.projekt_id).push(p);
+  }
+  return mapa;
+}
+
+// ---------- Podpowiedź "dodaj do ekranu głównego" ----------
+// Android/Chrome mają programowy prompt (beforeinstallprompt); iOS Safari go
+// NIE wspiera w ogóle (Apple celowo nie udostępnia tego API) - tam jedyna
+// droga to ręczne Udostępnij -> Dodaj do ekranu głównego, więc dla iOS
+// pokazujemy samą instrukcję zamiast przycisku.
+const KLUCZ_INSTALACJI_UKRYTEJ = 'o-majster-instalacja-ukryta';
+let odlozonyPromptInstalacji = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  odlozonyPromptInstalacji = e;
+  if (state.widok === 'projekty') renderProjekty();
+});
+
+function czyJuzZainstalowana() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+function czyIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+function czyBanerInstalacjiPotrzebny() {
+  if (czyJuzZainstalowana()) return false;
+  try {
+    if (localStorage.getItem(KLUCZ_INSTALACJI_UKRYTEJ)) return false;
+  } catch {}
+  return !!odlozonyPromptInstalacji || czyIOS();
+}
+function htmlBanerInstalacji() {
+  if (!czyBanerInstalacjiPotrzebny()) return '';
+  const tekst = odlozonyPromptInstalacji
+    ? 'Zainstaluj O!Majster jako appkę - szybszy dostęp z ekranu głównego, działa offline.'
+    : 'Dodaj O!Majster do ekranu głównego: stuknij „Udostępnij”, potem „Dodaj do ekranu głównego” - szybszy dostęp, działa offline.';
+  return `
+    <div class="uwaga-instalacja">
+      ${ikonaSvg('home')}
+      <span>${tekst}</span>
+      ${odlozonyPromptInstalacji ? '<button class="btn" id="btn-zainstaluj">Zainstaluj</button>' : ''}
+      <button class="btn-zamknij-baner" id="btn-zamknij-baner-instalacji" aria-label="Zamknij" title="Nie pokazuj więcej">${ikonaSvg('x')}</button>
+    </div>
+  `;
+}
+function wireBanerInstalacji() {
+  const btnZamknij = document.getElementById('btn-zamknij-baner-instalacji');
+  if (btnZamknij) {
+    btnZamknij.addEventListener('click', () => {
+      try { localStorage.setItem(KLUCZ_INSTALACJI_UKRYTEJ, '1'); } catch {}
+      renderProjekty();
+    });
+  }
+  const btnZainstaluj = document.getElementById('btn-zainstaluj');
+  if (btnZainstaluj) {
+    btnZainstaluj.addEventListener('click', async () => {
+      if (!odlozonyPromptInstalacji) return;
+      odlozonyPromptInstalacji.prompt();
+      await odlozonyPromptInstalacji.userChoice;
+      odlozonyPromptInstalacji = null;
+      renderProjekty();
+    });
+  }
+}
+
 async function renderProjekty() {
   topbarTitle.innerHTML = htmlBanerKompaktowy('hammer', 'O!Majster', 'topbar-baner-omajster');
-  const projekty = await pobierzProjekty();
-  const sumyProjektow = await Promise.all(
-    projekty.map(async (p) => sumaCalkowita(await pobierzPozycjeProjektu(p.id)))
-  );
-  projektyPamiec = projekty.map((p, i) => ({ ...p, _suma: sumyProjektow[i] }));
+  const [projekty, mapaPozycji, mapaPlatnosci] = await Promise.all([pobierzProjekty(), pozycjeWgProjektuMapa(), platnosciWgProjektuMapa()]);
+  projektyPamiec = projekty.map((p) => ({
+    ...p,
+    _suma: sumaCalkowita(mapaPozycji.get(p.id) || []),
+    _zaplacono: sumaPlatnosci(mapaPlatnosci.get(p.id) || []),
+  }));
 
   app.innerHTML = `
+    ${htmlBanerInstalacji()}
     ${projektyPamiec.length > 0 ? `
       <input id="szukaj-projekty" type="text" placeholder="🔍 Szukaj po nazwie lub kliencie..." value="${esc(state.filtrProjekty)}" style="margin-bottom:10px;" />
       <div class="przelacznik-grupowania">
@@ -442,6 +562,7 @@ async function renderProjekty() {
   `;
 
   renderListaProjektow();
+  wireBanerInstalacji();
 
   const poleSzukaj = document.getElementById('szukaj-projekty');
   if (poleSzukaj) {
@@ -464,9 +585,12 @@ async function renderProjekty() {
 // każdej literze). Sortuje i filtruje projektyPamiec zebrane przy ostatnim
 // pełnym renderze, bez ponownego odpytywania bazy.
 // Data rozpoczęcia to nowe pole (dodane 2026-09-27) - starsze projekty go nie
-// mają, stąd fallback na datę utworzenia rekordu.
+// mają, stąd fallback na datę utworzenia rekordu. `data_utworzenia` to pełny
+// znacznik UTC (`toISOString()`) - samo ucięcie do 10 znaków dawało datę UTC,
+// nie lokalną, więc projekt zapisany tuż po północy w Polsce trafiał "dzień
+// wcześniej" (ten sam błąd, który `dzisiajYMD`/`ymdLokalny` mają eliminować).
 function dataRozpoczeciaProjektu(p) {
-  return p.data_rozpoczecia || p.data_utworzenia.slice(0, 10);
+  return p.data_rozpoczecia || ymdLokalny(new Date(p.data_utworzenia));
 }
 // `dataYMD` to zwykłe "RRRR-MM-DD" (bez godziny) - dopisanie T00:00:00 zamiast
 // samego przekazania do Date() pilnuje, żeby parsowanie było w czasie lokalnym,
@@ -496,6 +620,11 @@ function renderListaProjektow() {
         <div>
           <div class="nazwa">${esc(p.nazwa)}</div>
           <div class="klient">${esc(p.klient) || 'Bez klienta'} &middot; ${formatujDateYMD(dataRozpoczeciaProjektu(p))}</div>
+          ${p._suma > 0 ? `
+            <div class="pasek-wplat" title="Zapłacono ${formatujKwote(p._zaplacono)} z ${formatujKwote(p._suma)}">
+              <div class="pasek-wplat-wypelnienie" style="width:${Math.min(100, (p._zaplacono / p._suma) * 100).toFixed(1)}%"></div>
+            </div>
+          ` : ''}
           ${htmlOdznakaStatusu(statusProjektu(p))}
           ${p.data_zakonczenia ? `<span class="znacznik-zakonczenia">Zakończono ${formatujDateYMD(p.data_zakonczenia)}</span>` : ''}
         </div>
@@ -514,11 +643,11 @@ function dialogNowyProjekt() {
     ${htmlNotatkaPrywatnosci()}
     <div class="pole">
       <label for="pole-nazwa">Nazwa projektu</label>
-      <input id="pole-nazwa" type="text" placeholder="np. Mieszkanie ul. Kwiatowa 5" />
+      <input id="pole-nazwa" type="text" placeholder="np. Mieszkanie ul. Kwiatowa 5" maxlength="200" />
     </div>
     <div class="pole">
       <label for="pole-klient">Klient (opcjonalnie)</label>
-      <input id="pole-klient" type="text" placeholder="np. Jan Kowalski" />
+      <input id="pole-klient" type="text" placeholder="np. Jan Kowalski" maxlength="200" />
     </div>
     <div class="pole">
       <label for="pole-data-rozpoczecia">Data rozpoczęcia</label>
@@ -708,7 +837,9 @@ async function renderKosztorys(projektId) {
       const pozycja = pozycje.find((p) => p.id === btn.dataset.usun);
       const usuniete = await usunPozycjeKosztorysu(btn.dataset.usun);
       renderKosztorys(projektId);
-      pokazCofnij(`Usunięto „${pozycja.nazwa}”.`, () => przywrocPozycjeKosztorysu(usuniete));
+      // `usuniete` bywa puste przy podwójnym kliknięciu (drugi klik trafia
+      // już nieistniejący rekord) - wtedy nie ma czego pokazywać/cofać.
+      if (usuniete.pozycja) pokazCofnij(`Usunięto „${pozycja.nazwa}”.`, () => przywrocPozycjeKosztorysu(usuniete));
     });
   });
 
@@ -718,7 +849,7 @@ async function renderKosztorys(projektId) {
     btn.addEventListener('click', async () => {
       const usunieta = await usunPlatnosc(btn.dataset.usunPlatnosc);
       renderKosztorys(projektId);
-      pokazCofnij(`Usunięto wpłatę ${formatujKwote(usunieta.kwota)}.`, () => przywrocPlatnosc(usunieta));
+      if (usunieta) pokazCofnij(`Usunięto wpłatę ${formatujKwote(usunieta.kwota)}.`, () => przywrocPlatnosc(usunieta));
     });
   });
 }
@@ -743,24 +874,44 @@ function grupujPozycje(pozycje, pole, domyslnaEtykieta) {
 
 // Prosty pasek podziału kosztów wg kategorii (zawsze wg kategorii, niezależnie
 // od przełącznika grupowania listy) - "gdzie poszły pieniądze" na pierwszy rzut oka.
+// Pierścień (donut) zamiast poziomego paska - czytelniejszy przy 4+
+// kategoriach niż wąskie segmenty w jednym rzędzie. Rysowany ręcznie przez
+// SVG <circle> ze stroke-dasharray/dashoffset (bez biblioteki wykresów -
+// appka ma być w 100% self-hosted). `transform="rotate(-90 50 50)"` na
+// grupie łuków, żeby pierwszy zaczynał się od godziny 12, jak w typowym
+// wykresie kołowym, a nie od 3.
 function htmlPasekPodzialu(pozycje) {
   const suma = sumaCalkowita(pozycje);
   if (suma <= 0) return '';
   const grupy = sumyKategorii(pozycje).filter((g) => g.suma > 0);
   if (grupy.length < 2) return '';
-  const segmenty = grupy.map((g, i) => {
+
+  const promien = 42;
+  const obwod = 2 * Math.PI * promien;
+  let dotychczas = 0;
+  const luki = grupy.map((g, i) => {
     const proc = (g.suma / suma) * 100;
+    const dlugosc = (proc / 100) * obwod;
     const kolor = PALETA_WYKRESU[i % PALETA_WYKRESU.length];
-    return `<div class="segment-paska" style="width:${proc.toFixed(2)}%; background:${kolor}" title="${esc(g.kategoria)}: ${formatujKwote(g.suma)} (${proc.toFixed(0)}%)"></div>`;
+    const luk = `<circle class="luk-donuta" cx="50" cy="50" r="${promien}" stroke="${kolor}" stroke-dasharray="${dlugosc.toFixed(2)} ${(obwod - dlugosc).toFixed(2)}" stroke-dashoffset="${(-dotychczas).toFixed(2)}"><title>${esc(g.kategoria)}: ${formatujKwote(g.suma)} (${proc.toFixed(0)}%)</title></circle>`;
+    dotychczas += dlugosc;
+    return luk;
   }).join('');
+
   const legenda = grupy.map((g, i) => {
     const proc = Math.round((g.suma / suma) * 100);
     const kolor = PALETA_WYKRESU[i % PALETA_WYKRESU.length];
     return `<div class="legenda-pozycja"><span class="kropka" style="background:${kolor}"></span>${ikonaKategorii(g.kategoria)} ${esc(g.kategoria)} &middot; ${proc}%</div>`;
   }).join('');
+
   return `
     <div class="podzial-kosztow">
-      <div class="pasek-podzialu">${segmenty}</div>
+      <svg class="donut-podzialu" viewBox="0 0 100 100" role="img" aria-label="Podział kosztów wg kategorii">
+        <circle class="donut-tlo" cx="50" cy="50" r="${promien}" />
+        <g transform="rotate(-90 50 50)">${luki}</g>
+        <text class="donut-liczba" x="50" y="47">${grupy.length}</text>
+        <text class="donut-etykieta" x="50" y="60">${odmien(grupy.length, 'kategoria', 'kategorie', 'kategorii')}</text>
+      </svg>
       <div class="legenda">${legenda}</div>
     </div>
   `;
@@ -775,7 +926,7 @@ function htmlPlatnosci(platnosci, suma) {
     <div class="pozycja pozycja-platnosci">
       <div>
         <div class="nazwa">${formatujKwote(p.kwota)}</div>
-        <div class="szczegoly">${new Date(p.data).toLocaleDateString('pl-PL')}${p.opis ? ' &middot; ' + esc(p.opis) : ''}</div>
+        <div class="szczegoly">${formatujDateYMD(p.data)}${p.opis ? ' &middot; ' + esc(p.opis) : ''}</div>
       </div>
       <button class="btn-usun" data-usun-platnosc="${p.id}" aria-label="Usuń wpłatę" title="Usuń wpłatę">${ikonaSvg('trash-2')}</button>
     </div>
@@ -807,7 +958,7 @@ function dialogPlatnosc(projektId) {
     </div>
     <div class="pole">
       <label for="pole-opis-platnosci">Opis (opcjonalnie)</label>
-      <input id="pole-opis-platnosci" type="text" placeholder="np. zaliczka" />
+      <input id="pole-opis-platnosci" type="text" placeholder="np. zaliczka" maxlength="200" />
     </div>
     <div class="dialog-akcje">
       <button class="btn wtorny" id="btn-anuluj">Anuluj</button>
@@ -848,17 +999,18 @@ async function dialogPozycja(projektId, edytowanaPozycja = null) {
     ` : ''}
     <div class="pole">
       <label for="pole-nazwa">Nazwa czynności</label>
-      <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" value="${esc(edytowanaPozycja?.nazwa)}" />
+      <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" value="${esc(edytowanaPozycja?.nazwa)}" maxlength="200" />
     </div>
     <div class="pole">
       <label for="pole-kategoria">Kategoria (dobierana automatycznie z czynności)</label>
       <select id="pole-kategoria" disabled>
+        ${!edytowanaPozycja ? '<option value="" selected>— wybierz czynność z cennika, żeby dobrać kategorię —</option>' : ''}
         ${kategorie.map((k) => `<option value="${esc(k.nazwa)}" ${edytowanaPozycja?.kategoria === k.nazwa ? 'selected' : ''}>${ikonaKategoriiTekst(k.nazwa)} ${esc(k.nazwa)}</option>`).join('')}
       </select>
     </div>
     <div class="pole">
       <label for="pole-pomieszczenie">Pomieszczenie (opcjonalnie)</label>
-      <input id="pole-pomieszczenie" type="text" list="lista-pomieszczen" placeholder="np. Łazienka" value="${esc(edytowanaPozycja?.pomieszczenie ?? '')}" />
+      <input id="pole-pomieszczenie" type="text" list="lista-pomieszczen" placeholder="np. Łazienka" value="${esc(edytowanaPozycja?.pomieszczenie ?? '')}" maxlength="100" />
       <datalist id="lista-pomieszczen">
         ${POMIESZCZENIA_PODPOWIEDZI.map((p) => `<option value="${esc(p)}"></option>`).join('')}
       </datalist>
@@ -1037,7 +1189,7 @@ function dialogDuplikujProjekt(projekt) {
     <h2>Duplikuj projekt</h2>
     <div class="pole">
       <label for="pole-nazwa">Nazwa nowego projektu</label>
-      <input id="pole-nazwa" type="text" value="Kopia - ${esc(projekt.nazwa)}" />
+      <input id="pole-nazwa" type="text" value="Kopia - ${esc(projekt.nazwa)}" maxlength="200" />
     </div>
     <div class="uwaga">Skopiuje wszystkie pozycje kosztorysu. Płatności NIE są kopiowane - to historia konkretnego zlecenia.</div>
     <div class="dialog-akcje">
@@ -1077,7 +1229,7 @@ async function dialogSzablonPomieszczenia(projektId) {
     </div>
     <div class="pole">
       <label for="pole-pomieszczenie">Nazwa pomieszczenia (do tagu)</label>
-      <input id="pole-pomieszczenie" type="text" value="${esc(nazwySzablonow[0])}" />
+      <input id="pole-pomieszczenie" type="text" value="${esc(nazwySzablonow[0])}" maxlength="100" />
     </div>
     <div class="pole">
       <label>Czynności do dodania (odznacz to, czego nie potrzebujesz)</label>
@@ -1173,7 +1325,7 @@ function renderListaCennika(filtr) {
       e.stopPropagation();
       const usunieta = await usunPozycjeCennika(btn.dataset.usun);
       renderCennik();
-      pokazCofnij(`Usunięto „${usunieta.nazwa}” z cennika.`, () => przywrocPozycjeCennika(usunieta));
+      if (usunieta) pokazCofnij(`Usunięto „${usunieta.nazwa}” z cennika.`, () => przywrocPozycjeCennika(usunieta));
     });
   });
 }
@@ -1187,7 +1339,7 @@ async function dialogPozycjaCennika(edytowanaPozycja = null, domyslnaKategoria =
     <h2>${edycja ? 'Edytuj stawkę' : 'Nowa czynność w cenniku'}</h2>
     <div class="pole">
       <label for="pole-nazwa">Nazwa czynności</label>
-      <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" value="${esc(edytowanaPozycja?.nazwa)}" />
+      <input id="pole-nazwa" type="text" placeholder="np. Ułożenie płytek podłogowych" value="${esc(edytowanaPozycja?.nazwa)}" maxlength="200" />
     </div>
     <div class="pole">
       <label for="pole-kategoria">Kategoria</label>
@@ -1243,10 +1395,9 @@ let podsumowaniePamiec = { projekty: [], platnosci: [] };
 
 async function renderPodsumowanie() {
   topbarTitle.innerHTML = htmlBanerKompaktowy('bar-chart-3', 'Podsumowanie');
-  const [projekty, platnosci] = await Promise.all([pobierzProjekty(), pobierzWszystkiePlatnosci()]);
-  const sumy = await Promise.all(projekty.map(async (p) => sumaCalkowita(await pobierzPozycjeProjektu(p.id))));
+  const [projekty, platnosci, mapaPozycji] = await Promise.all([pobierzProjekty(), pobierzWszystkiePlatnosci(), pozycjeWgProjektuMapa()]);
   podsumowaniePamiec = {
-    projekty: projekty.map((p, i) => ({ ...p, _suma: sumy[i] })),
+    projekty: projekty.map((p) => ({ ...p, _suma: sumaCalkowita(mapaPozycji.get(p.id) || []) })),
     platnosci,
   };
 
@@ -1279,11 +1430,7 @@ function wplatySumaWFiltrze(filtrPrefiks) {
     .reduce((acc, pl) => acc + Number(pl.kwota || 0), 0);
 }
 function odmienProjekty(n) {
-  if (n === 1) return 'projekt';
-  const ost = n % 10;
-  const dzies = n % 100;
-  if (ost >= 2 && ost <= 4 && !(dzies >= 12 && dzies <= 14)) return 'projekty';
-  return 'projektów';
+  return odmien(n, 'projekt', 'projekty', 'projektów');
 }
 
 function renderTrescPodsumowania() {
@@ -1291,8 +1438,11 @@ function renderTrescPodsumowania() {
     btn.classList.toggle('aktywny', btn.dataset.trybPodsum === state.podsumowanieTryb);
   });
   const kontener = document.getElementById('tresc-podsumowania');
+  const poprzedniaSuma = odczytajKwote(document.getElementById('suma-wplat-okresu')?.textContent);
   kontener.innerHTML = state.podsumowanieTryb === 'rok' ? htmlPodsumowanieRoku() : htmlPodsumowanieMiesiaca();
   wirePodsumowanie();
+  const elSuma = document.getElementById('suma-wplat-okresu');
+  animujKwote(elSuma, poprzedniaSuma, odczytajKwote(elSuma.textContent));
 }
 
 function htmlPodsumowanieRoku() {
@@ -1300,14 +1450,34 @@ function htmlPodsumowanieRoku() {
   const projektyTegoRoku = projektyRoku(rok);
   const sumaWplatRoku = wplatySumaWFiltrze(String(rok));
 
+  const wplatyPerMiesiac = MIESIACE_PL.map((_, i) => wplatySumaWFiltrze(`${rok}-${String(i + 1).padStart(2, '0')}`));
+  const maxWplata = Math.max(...wplatyPerMiesiac, 1);
+  const dzis = new Date();
+  const wykresTrendu = `
+    <div class="karta">
+      <div class="wykres-trendu">
+        ${MIESIACE_PL.map((nazwa, i) => {
+          const wartosc = wplatyPerMiesiac[i];
+          const proc = (wartosc / maxWplata) * 100;
+          const biezacy = i === dzis.getMonth() && rok === dzis.getFullYear();
+          return `
+            <div class="slupek-wykresu" data-miesiac="${i}" title="${nazwa}: ${formatujKwote(wartosc)}">
+              <div class="slupek-wypelnienie ${biezacy ? 'biezacy' : ''}" style="height:${proc}%"></div>
+              <span class="etykieta-slupka">${nazwa.slice(0, 3)}</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+
   const wierszeMiesiecy = MIESIACE_PL.map((nazwa, i) => {
     const liczbaProj = projektyMiesiaca(rok, i).length;
-    const wplaty = wplatySumaWFiltrze(`${rok}-${String(i + 1).padStart(2, '0')}`);
     return `
       <div class="wiersz-miesiaca" data-miesiac="${i}">
         <span class="nazwa-miesiaca">${nazwa}</span>
         <span class="liczba-miesiaca">${liczbaProj} ${odmienProjekty(liczbaProj)}</span>
-        <span class="kwota-miesiaca">${formatujKwote(wplaty)}</span>
+        <span class="kwota-miesiaca">${formatujKwote(wplatyPerMiesiac[i])}</span>
       </div>
     `;
   }).join('');
@@ -1320,9 +1490,10 @@ function htmlPodsumowanieRoku() {
     </div>
     <div class="karta">
       <div class="wiersz-podsumowania"><span>Projektów rozpoczętych w ${rok}</span><span>${projektyTegoRoku.length}</span></div>
-      <div class="wiersz-podsumowania wiersz-suma"><span>Wpłacono w ${rok}</span><span>${formatujKwote(sumaWplatRoku)}</span></div>
+      <div class="wiersz-podsumowania wiersz-suma"><span>Wpłacono w ${rok}</span><span id="suma-wplat-okresu">${formatujKwote(sumaWplatRoku)}</span></div>
     </div>
-    <div class="uwaga">Liczba projektów liczona wg daty rozpoczęcia. Wpłaty liczone wg daty wpłaty - mogą pochodzić też z projektów rozpoczętych w innym roku. Stuknij miesiąc, żeby zobaczyć jego projekty.</div>
+    ${wplatyPerMiesiac.some((w) => w > 0) ? wykresTrendu : ''}
+    <div class="uwaga">Liczba projektów liczona wg daty rozpoczęcia. Wpłaty liczone wg daty wpłaty - mogą pochodzić też z projektów rozpoczętych w innym roku. Stuknij miesiąc/słupek, żeby zobaczyć szczegóły.</div>
     <div class="karta lista-miesiecy">${wierszeMiesiecy}</div>
   `;
 }
@@ -1354,7 +1525,7 @@ function htmlPodsumowanieMiesiaca() {
     </div>
     <div class="karta">
       <div class="wiersz-podsumowania"><span>Projektów rozpoczętych</span><span>${projektyMies.length}</span></div>
-      <div class="wiersz-podsumowania wiersz-suma"><span>Wpłacono w tym miesiącu</span><span>${formatujKwote(wplaty)}</span></div>
+      <div class="wiersz-podsumowania wiersz-suma"><span>Wpłacono w tym miesiącu</span><span id="suma-wplat-okresu">${formatujKwote(wplaty)}</span></div>
     </div>
     <div class="karta">${listaHtml}</div>
   `;
@@ -1383,7 +1554,7 @@ function wirePodsumowanie() {
     });
   }
 
-  app.querySelectorAll('.wiersz-miesiaca').forEach((el) => {
+  app.querySelectorAll('.wiersz-miesiaca, .slupek-wykresu').forEach((el) => {
     el.addEventListener('click', () => {
       state.podsumowanieMiesiac = Number(el.dataset.miesiac);
       state.podsumowanieTryb = 'miesiac';
@@ -1423,15 +1594,15 @@ async function renderUstawienia() {
       <h3 class="sekcja-tytul">Dane firmy (widoczne na wydruku)</h3>
       <div class="pole">
         <label for="pole-firma-nazwa">Nazwa firmy / imię i nazwisko</label>
-        <input id="pole-firma-nazwa" type="text" value="${esc(firma.nazwa)}" />
+        <input id="pole-firma-nazwa" type="text" value="${esc(firma.nazwa)}" maxlength="200" />
       </div>
       <div class="pole">
         <label for="pole-firma-telefon">Telefon</label>
-        <input id="pole-firma-telefon" type="text" value="${esc(firma.telefon)}" />
+        <input id="pole-firma-telefon" type="text" value="${esc(firma.telefon)}" maxlength="30" />
       </div>
       <div class="pole">
         <label for="pole-firma-email">E-mail</label>
-        <input id="pole-firma-email" type="text" value="${esc(firma.email)}" />
+        <input id="pole-firma-email" type="text" value="${esc(firma.email)}" maxlength="200" />
       </div>
       <div class="pole">
         <label>Logo (widoczne na wydruku/PDF)</label>
@@ -1483,7 +1654,7 @@ async function renderUstawienia() {
       <div class="pole" style="margin-top:14px;">
         <label for="pole-nowa-kategoria">Nowa kategoria</label>
         <div style="display:flex; gap:8px;">
-          <input id="pole-nowa-kategoria" type="text" placeholder="np. Ogród / Taras" style="flex:1;" />
+          <input id="pole-nowa-kategoria" type="text" placeholder="np. Ogród / Taras" style="flex:1;" maxlength="100" />
           <button class="btn maly" id="btn-dodaj-kategorie">Dodaj</button>
         </div>
       </div>
@@ -1589,7 +1760,7 @@ async function renderUstawienia() {
       e.stopPropagation();
       const usunieta = await usunPozycjeCennika(btn.dataset.usunCzynnosc);
       renderUstawienia();
-      pokazCofnij(`Usunięto „${usunieta.nazwa}” z cennika.`, () => przywrocPozycjeCennika(usunieta));
+      if (usunieta) pokazCofnij(`Usunięto „${usunieta.nazwa}” z cennika.`, () => przywrocPozycjeCennika(usunieta));
     });
   });
 
@@ -1644,6 +1815,10 @@ async function renderUstawienia() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    // Nie wiemy, czy user faktycznie zapisał plik gdzieś bezpiecznie (mógł
+    // anulować dialog zapisu) - ale to najlepszy dostępny sygnał "kopia
+    // zrobiona", do przypomnienia w `sprawdzPrzypomnienieKopii()`.
+    try { localStorage.setItem(KLUCZ_OSTATNIEGO_EKSPORTU, dzisiajYMD()); } catch {}
   });
 
   const plikImportu = document.getElementById('plik-importu');
@@ -1651,6 +1826,20 @@ async function renderUstawienia() {
   plikImportu.addEventListener('change', async () => {
     const plik = plikImportu.files[0];
     if (!plik) return;
+    // Import PODMIENIA projekty/pozycje/płatności/ustawienia z tym samym ID
+    // (nadpisuje bez ostrzeżenia) i scala cennik/kategorie - pomyłkowo
+    // wybrany plik (np. stara kopia) cicho cofnąłby część danych. Jedno
+    // pytanie kontrolne, zanim cokolwiek się zmieni w bazie.
+    if (!confirm('Import scali dane z pliku z tym, co już masz w aplikacji (może nadpisać projekty/płatności o tych samych ID). Kontynuować?')) {
+      plikImportu.value = '';
+      return;
+    }
+    const MAX_ROZMIAR_KOPII_MB = 50;
+    if (plik.size > MAX_ROZMIAR_KOPII_MB * 1024 * 1024) {
+      alert(`Plik jest za duży (max ${MAX_ROZMIAR_KOPII_MB} MB) - to nie wygląda na kopię zapasową O!Majster.`);
+      plikImportu.value = '';
+      return;
+    }
     try {
       const tekst = await plik.text();
       const kopia = JSON.parse(tekst);
@@ -1670,11 +1859,7 @@ async function renderUstawienia() {
 }
 
 function odmienPozycje(n) {
-  if (n === 1) return 'pozycję';
-  const ostatniaCyfra = n % 10;
-  const ostatnieDwie = n % 100;
-  if (ostatniaCyfra >= 2 && ostatniaCyfra <= 4 && !(ostatnieDwie >= 12 && ostatnieDwie <= 14)) return 'pozycje';
-  return 'pozycji';
+  return odmien(n, 'pozycję', 'pozycje', 'pozycji');
 }
 
 // ---------- Dialog (generyczny) ----------
@@ -1818,6 +2003,44 @@ async function sprawdzPowiadomieniaProjektow() {
   await odswiezOdznakePowiadomien();
 }
 
+// Przypomnienie o kopii zapasowej - dane siedzą TYLKO na tym telefonie, więc
+// brak świeżego eksportu = ryzyko utraty wszystkiego przy zgubieniu/wymianie
+// urządzenia. `projektId: ID_POWIADOMIEN_SYSTEMOWYCH` (nie prawdziwy projekt) -
+// `pokazPowiadomienia()` i tak nie zależy od projekt_id przy wyświetlaniu.
+const ID_POWIADOMIEN_SYSTEMOWYCH = 'system';
+const DNI_DO_PRZYPOMNIENIA_KOPII = 14;
+async function sprawdzPrzypomnienieKopii() {
+  let projekty, powiadomienia;
+  try {
+    [projekty, powiadomienia] = await Promise.all([pobierzProjekty(), pobierzPowiadomienia()]);
+  } catch {
+    return; // brak dostępu do bazy - nic nie sprawdzamy, appka i tak dalej działa
+  }
+  if (projekty.length === 0) return; // nic jeszcze do zabezpieczenia
+
+  let ostatniEksport = null;
+  try { ostatniEksport = localStorage.getItem(KLUCZ_OSTATNIEGO_EKSPORTU); } catch {}
+  const dzis = new Date(dzisiajYMD() + 'T00:00:00');
+  const dniOdEksportu = ostatniEksport ? Math.round((dzis - new Date(ostatniEksport + 'T00:00:00')) / 86400000) : Infinity;
+  if (dniOdEksportu < DNI_DO_PRZYPOMNIENIA_KOPII) return; // kopia świeża
+
+  // Nie duplikuj przypomnienia codziennie - tylko jeśli poprzednie (jeśli
+  // istnieje) samo jest starsze niż próg.
+  const ostatniePrzypomnienie = powiadomienia
+    .filter((p) => p.projekt_id === ID_POWIADOMIEN_SYSTEMOWYCH && p.typ === 'kopia-zapasowa')
+    .sort((a, b) => b.data_utworzenia.localeCompare(a.data_utworzenia))[0];
+  const dniOdPrzypomnienia = ostatniePrzypomnienie
+    ? Math.round((dzis - new Date(ostatniePrzypomnienie.data_utworzenia)) / 86400000)
+    : Infinity;
+  if (dniOdPrzypomnienia < DNI_DO_PRZYPOMNIENIA_KOPII) return;
+
+  const tresc = ostatniEksport
+    ? `Minęło ${dniOdEksportu} dni od ostatniej kopii zapasowej - zrób nową w Ustawieniach, żeby nie stracić danych.`
+    : 'Nie masz jeszcze kopii zapasowej danych - zrób ją w Ustawieniach (Kopia zapasowa), żeby nic nie przepadło przy zgubieniu/wymianie telefonu.';
+  await dodajPowiadomienie({ projektId: ID_POWIADOMIEN_SYSTEMOWYCH, typ: 'kopia-zapasowa', tresc });
+  await odswiezOdznakePowiadomien();
+}
+
 async function odswiezOdznakePowiadomien() {
   const liczba = await pobierzLiczbeNieprzeczytanychPowiadomien();
   if (liczba > 0) {
@@ -1883,3 +2106,4 @@ odswiezKolorPaskaStatusu();
 render();
 pokazOnboardingJesliPotrzebny();
 sprawdzPowiadomieniaProjektow();
+sprawdzPrzypomnienieKopii();

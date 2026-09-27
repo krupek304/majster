@@ -1,10 +1,11 @@
 // Service worker - cache app shell, żeby appka działała offline po dodaniu do ekranu głównego.
-const CACHE_NAZWA = 'majster-v26';
+const CACHE_NAZWA = 'majster-v30';
 const PLIKI_DO_CACHE = [
   './',
   './index.html',
   './manifest.webmanifest',
   './css/style.css',
+  './js/motyw.js',
   './js/app.js',
   './js/db.js',
   './js/calc.js',
@@ -66,11 +67,23 @@ self.addEventListener('fetch', (event) => {
       if (cached) return cached;
       return fetch(event.request)
         .then((odpowiedz) => {
-          const kopia = odpowiedz.clone();
-          caches.open(CACHE_NAZWA).then((cache) => cache.put(event.request, kopia));
+          // Cache'ować tylko udaną odpowiedź - inaczej błąd 404/500 (np. literówka
+          // w nazwie pliku po wdrożeniu) zapisałby się jako "poprawna" treść i byłby
+          // serwowany offline aż do zmiany CACHE_NAZWA.
+          if (odpowiedz.ok) {
+            const kopia = odpowiedz.clone();
+            caches.open(CACHE_NAZWA).then((cache) => cache.put(event.request, kopia));
+          }
           return odpowiedz;
         })
-        .catch(() => cached);
+        .catch(() => {
+          // Brak sieci i nic w cache dla tego zasobu (`cached` powyżej było puste,
+          // inaczej nie dotarlibyśmy tutaj). Dla nawigacji (otwarcie/odświeżenie
+          // strony) jedyny sensowny ratunek offline to podstawić zapisaną powłokę
+          // aplikacji zamiast twardego błędu sieci.
+          if (event.request.mode === 'navigate') return caches.match('./index.html');
+          return Response.error();
+        });
     })
   );
 });

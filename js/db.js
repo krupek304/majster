@@ -91,6 +91,19 @@ const DOMYSLNY_CENNIK = [
 ];
 const DOMYSLNE_KATEGORIE = [...new Set(DOMYSLNY_CENNIK.map((p) => p.kategoria))];
 
+// Lista nazw domyślnych kategorii, które użytkownik usunął NA STAŁE (patrz
+// `usunKategorieRazemZCennikiem`) - bez niej `zapewnijDaneStartowe` (dogrywa
+// brakujące domyślne kategorie PO NAZWIE, żeby aktualizacje appki dotarły do
+// starszych baz) nie odróżniałby "kategorii, której baza jeszcze nie miała"
+// od "kategorii, którą użytkownik świadomie skasował" - i wskrzeszałby tę
+// drugą przy każdym starcie appki.
+const ID_USUNIETYCH_KATEGORII = 'usuniete-domyslne-kategorie';
+async function pobierzUsunieteDomyslneKategorie(db) {
+  const wszystkie = await getAll(db, 'ustawienia');
+  const rekord = wszystkie.find((u) => u.id === ID_USUNIETYCH_KATEGORII);
+  return new Set(rekord?.nazwy || []);
+}
+
 let dbPromise = null;
 
 export function openDB() {
@@ -162,9 +175,13 @@ async function zapewnijDaneStartowe(db) {
   // użytkownika ani duplikowania tych, które już tam są.
   const istniejaceKategorie = await getAll(db, 'kategorie');
   const istniejaceNazwy = new Set(istniejaceKategorie.map((k) => k.nazwa));
-  const brakujaceKategorie = DOMYSLNE_KATEGORIE.filter((nazwa) => !istniejaceNazwy.has(nazwa));
+  const usunieteNaStale = await pobierzUsunieteDomyslneKategorie(db);
+  const brakujaceKategorie = DOMYSLNE_KATEGORIE.filter((nazwa) => !istniejaceNazwy.has(nazwa) && !usunieteNaStale.has(nazwa));
   if (brakujaceKategorie.length > 0) {
-    let kolejnosc = istniejaceKategorie.length;
+    // Max+1, nie .length - po usunięciu którejś kategorii w numeracji `kolejnosc`
+    // zostają luki (patrz identyczny komentarz przy `dodajKategorie`), więc
+    // .length mógłby trafić na już zajętą wartość i popsuć kolejność sortowania.
+    let kolejnosc = istniejaceKategorie.reduce((max, k) => Math.max(max, k.kolejnosc), -1) + 1;
     await withStore(db, 'kategorie', 'readwrite', (store) => {
       brakujaceKategorie.forEach((nazwa) => {
         store.put({ id: cryptoId(), nazwa, kolejnosc: kolejnosc++ });
@@ -179,7 +196,7 @@ async function zapewnijDaneStartowe(db) {
   const istniejacyCennik = await getAll(db, 'cennik');
   const istniejaceParyKatNazwa = new Set(istniejacyCennik.map((p) => p.kategoria + '\u0001' + p.nazwa));
   const brakujaceWCenniku = DOMYSLNY_CENNIK.filter(
-    (p) => !istniejaceParyKatNazwa.has(p.kategoria + '\u0001' + p.nazwa)
+    (p) => !istniejaceParyKatNazwa.has(p.kategoria + '\u0001' + p.nazwa) && !usunieteNaStale.has(p.kategoria)
   );
   if (brakujaceWCenniku.length > 0) {
     await withStore(db, 'cennik', 'readwrite', (store) => {
@@ -216,6 +233,22 @@ function withStore(db, storeName, mode, fn) {
     const tx = db.transaction(storeName, mode);
     const store = tx.objectStore(storeName);
     const result = fn(store);
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+// Jak `withStore`, ale dla operacji kaskadowych rozsianych po kilku store'ach
+// naraz (np. skasowanie projektu razem z jego pozycjami/płatnościami/zdjęciami) -
+// JEDNA transakcja IndexedDB zamiast kilku osobnych `withStore` po kolei, więc
+// operacja jest atomowa: przerwanie w trakcie (zamknięcie karty, awaria) nie
+// może zostawić rekordów w częściowo skasowanym/zapisanym stanie.
+function withStores(db, storeNames, mode, fn) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeNames, mode);
+    const stores = Object.fromEntries(storeNames.map((n) => [n, tx.objectStore(n)]));
+    const result = fn(stores);
     tx.oncomplete = () => resolve(result);
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
@@ -288,14 +321,26 @@ export async function duplikujProjekt(projektId, nowaNazwa) {
     klient: oryginal.klient,
     status: 'wycena',
     data_utworzenia: new Date().toISOString(),
+    // Duplikat to nowy projekt "od dziś", nie kopia daty oryginału (ta mogła
+    // już minąć) - te same pola co `dodajProjekt`, żeby nie trafiał do
+    // Podsumowania/powiadomień po dacie utworzenia w UTC (patrz `dataRozpoczeciaProjektu`).
+    data_rozpoczecia: dzisiajYMD(),
+    data_zakonczenia: null,
   };
-  const pozycje = await getAll(db, 'pozycje', 'projekt_id', projektId);
-  const teraz = new Date().toISOString();
+  // `getAll` po indeksie `projekt_id` NIE zwraca w kolejności `data` (tylko wg
+  // klucza głównego, czyli losowego UUID) - trzeba posortować PRZED nadaniem
+  // nowych znaczników czasu, inaczej kopia i tak wychodzi w losowej kolejności
+  // mimo unikalnych `data` (ten sam efekt końcowy, inna przyczyna niż remis).
+  const pozycje = (await getAll(db, 'pozycje', 'projekt_id', projektId)).sort((a, b) => a.data.localeCompare(b.data));
+  // +1ms na pozycję, nie identyczny czas dla wszystkich - patrz komentarz
+  // przy `dodajWielePozycjiKosztorysu` (ten sam błąd tasowania kolejności
+  // przy remisach w sortowaniu po `data`).
+  const bazowyCzas = Date.now();
 
   await withStore(db, 'projekty', 'readwrite', (store) => store.put(nowyProjekt));
   await withStore(db, 'pozycje', 'readwrite', (store) => {
-    pozycje.forEach((p) => {
-      store.put({ ...p, id: cryptoId(), projekt_id: nowyProjekt.id, data: teraz });
+    pozycje.forEach((p, i) => {
+      store.put({ ...p, id: cryptoId(), projekt_id: nowyProjekt.id, data: new Date(bazowyCzas + i).toISOString() });
     });
   });
   return { projekt: nowyProjekt, liczbaPozycji: pozycje.length };
@@ -314,16 +359,12 @@ export async function usunProjekt(projektId) {
   ]);
   const idPozycji = new Set(pozycje.map((p) => p.id));
   const zdjecia = wszystkieZdjecia.filter((z) => idPozycji.has(z.pozycja_id));
-  await withStore(db, 'zdjecia', 'readwrite', (store) => {
-    zdjecia.forEach((z) => store.delete(z.id));
+  await withStores(db, ['zdjecia', 'pozycje', 'platnosci', 'projekty'], 'readwrite', (stores) => {
+    zdjecia.forEach((z) => stores.zdjecia.delete(z.id));
+    pozycje.forEach((p) => stores.pozycje.delete(p.id));
+    platnosci.forEach((p) => stores.platnosci.delete(p.id));
+    stores.projekty.delete(projektId);
   });
-  await withStore(db, 'pozycje', 'readwrite', (store) => {
-    pozycje.forEach((p) => store.delete(p.id));
-  });
-  await withStore(db, 'platnosci', 'readwrite', (store) => {
-    platnosci.forEach((p) => store.delete(p.id));
-  });
-  await withStore(db, 'projekty', 'readwrite', (store) => store.delete(projektId));
   return { projekt, pozycje, platnosci, zdjecia };
 }
 
@@ -376,11 +417,24 @@ export async function aktualizujKategorie(kategoria) {
 // poprawnie (ostrzeżenie z liczbą pokazuje się w UI przed potwierdzeniem).
 export async function usunKategorieRazemZCennikiem(kategoriaId, nazwaKategorii) {
   const db = await openDB();
-  const cennikDoUsuniecia = (await getAll(db, 'cennik')).filter((c) => c.kategoria === nazwaKategorii);
-  await withStore(db, 'cennik', 'readwrite', (store) => {
-    cennikDoUsuniecia.forEach((c) => store.delete(c.id));
+  const [calyCennik, usunieteNaStale] = await Promise.all([
+    getAll(db, 'cennik'),
+    pobierzUsunieteDomyslneKategorie(db),
+  ]);
+  const cennikDoUsuniecia = calyCennik.filter((c) => c.kategoria === nazwaKategorii);
+  // Kategoria domyślna wraca inaczej niż użytkownika własna: `zapewnijDaneStartowe`
+  // dogrywa brakujące domyślne kategorie PO NAZWIE przy każdym starcie appki (dla
+  // aktualizacji z nowszej wersji) - bez tego wpisu "usunięto na stałe" wróciłaby
+  // przy następnym otwarciu appki, mimo usunięcia. Wszystko w jednej transakcji,
+  // żeby usunięcie kategorii+cennika i zapamiętanie tombstone było atomowe.
+  if (DOMYSLNE_KATEGORIE.includes(nazwaKategorii)) usunieteNaStale.add(nazwaKategorii);
+  await withStores(db, ['cennik', 'kategorie', 'ustawienia'], 'readwrite', (stores) => {
+    cennikDoUsuniecia.forEach((c) => stores.cennik.delete(c.id));
+    stores.kategorie.delete(kategoriaId);
+    if (DOMYSLNE_KATEGORIE.includes(nazwaKategorii)) {
+      stores.ustawienia.put({ id: ID_USUNIETYCH_KATEGORII, nazwy: [...usunieteNaStale] });
+    }
   });
-  await withStore(db, 'kategorie', 'readwrite', (store) => store.delete(kategoriaId));
   return { usunietoZCennika: cennikDoUsuniecia.length };
 }
 
@@ -393,20 +447,20 @@ export async function usunKategorieRazemZCennikiem(kategoriaId, nazwaKategorii) 
 export async function przywrocDomyslnyCennik() {
   const db = await openDB();
   const [stareKategorie, staryCennik] = await Promise.all([getAll(db, 'kategorie'), getAll(db, 'cennik')]);
-  await withStore(db, 'kategorie', 'readwrite', (store) => {
-    stareKategorie.forEach((k) => store.delete(k.id));
-  });
-  await withStore(db, 'cennik', 'readwrite', (store) => {
-    staryCennik.forEach((c) => store.delete(c.id));
-  });
-  await withStore(db, 'kategorie', 'readwrite', (store) => {
+  // Jedna transakcja na kategorie+cennik+ustawienia - kasowanie starych i zasiew
+  // nowych domyślnych danych jest atomowe (nie ma stanu pośredniego "pustej bazy",
+  // gdyby coś przerwało operację w trakcie).
+  await withStores(db, ['kategorie', 'cennik', 'ustawienia'], 'readwrite', (stores) => {
+    stareKategorie.forEach((k) => stores.kategorie.delete(k.id));
+    staryCennik.forEach((c) => stores.cennik.delete(c.id));
+    // Reset przywraca WSZYSTKIE domyślne kategorie, więc czyści też listę "usuniętych
+    // na stałe" - inaczej ten sam reset natychmiast by je z powrotem uznał za usunięte.
+    stores.ustawienia.delete(ID_USUNIETYCH_KATEGORII);
     DOMYSLNE_KATEGORIE.forEach((nazwa, kolejnosc) => {
-      store.put({ id: cryptoId(), nazwa, kolejnosc, ukryta: false });
+      stores.kategorie.put({ id: cryptoId(), nazwa, kolejnosc, ukryta: false });
     });
-  });
-  await withStore(db, 'cennik', 'readwrite', (store) => {
     DOMYSLNY_CENNIK.forEach((p) => {
-      store.put({ id: cryptoId(), kategoria: p.kategoria, nazwa: p.nazwa, jednostka: p.jednostka, stawka: p.stawka });
+      stores.cennik.put({ id: cryptoId(), kategoria: p.kategoria, nazwa: p.nazwa, jednostka: p.jednostka, stawka: p.stawka });
     });
   });
   return { liczbaKategorii: DOMYSLNE_KATEGORIE.length, liczbaCennika: DOMYSLNY_CENNIK.length };
@@ -513,10 +567,10 @@ const WSZYSTKIE_STORY_KOPII = ['projekty', 'cennik', 'pozycje', 'kategorie', 'uz
 
 export async function eksportujCalaBaze() {
   const db = await openDB();
-  const dane = {};
-  for (const nazwaStore of WSZYSTKIE_STORY_KOPII) {
-    dane[nazwaStore] = await getAll(db, nazwaStore);
-  }
+  // Store'y są niezależne od siebie - jedno-po-drugim byłoby 7 sekwencyjnych
+  // transakcji zamiast równoległych.
+  const wyniki = await Promise.all(WSZYSTKIE_STORY_KOPII.map((nazwaStore) => getAll(db, nazwaStore)));
+  const dane = Object.fromEntries(WSZYSTKIE_STORY_KOPII.map((nazwaStore, i) => [nazwaStore, wyniki[i]]));
   return { aplikacja: 'O!Majster', wersjaBazy: DB_VERSION, eksportowano: new Date().toISOString(), dane };
 }
 
@@ -563,10 +617,17 @@ export async function importujCalaBaze(kopia) {
   // wprost, żeby zachować powiązania (pozycje.projekt_id -> projekty.id z tej
   // samej kopii).
   for (const nazwaStore of ['projekty', 'pozycje', 'platnosci', 'ustawienia']) {
-    const rekordy = Array.isArray(kopia.dane[nazwaStore]) ? kopia.dane[nazwaStore] : [];
+    let rekordy = Array.isArray(kopia.dane[nazwaStore]) ? kopia.dane[nazwaStore] : [];
     if (rekordy.length === 0) {
       wynik[nazwaStore] = 0;
       continue;
+    }
+    // Plik kopii to dane z zewnątrz (mógł być ręcznie edytowany albo pochodzić
+    // ze starszej wersji appki) - `pobierzPozycjeProjektu` sortuje pozycje po
+    // `data` i wywali się (`undefined.localeCompare`), jeśli rekordowi tego
+    // pola brakuje. Dogrywamy bezpieczną wartość zamiast wywalać cały import.
+    if (nazwaStore === 'pozycje') {
+      rekordy = rekordy.map((r) => (r.data ? r : { ...r, data: new Date().toISOString() }));
     }
     await withStore(db, nazwaStore, 'readwrite', (store) => {
       rekordy.forEach((r) => store.put(r));
@@ -658,10 +719,10 @@ export async function usunPozycjeKosztorysu(id) {
     getOne(db, 'pozycje', id),
     getAll(db, 'zdjecia', 'pozycja_id', id),
   ]);
-  await withStore(db, 'zdjecia', 'readwrite', (store) => {
-    zdjecia.forEach((z) => store.delete(z.id));
+  await withStores(db, ['zdjecia', 'pozycje'], 'readwrite', (stores) => {
+    zdjecia.forEach((z) => stores.zdjecia.delete(z.id));
+    stores.pozycje.delete(id);
   });
-  await withStore(db, 'pozycje', 'readwrite', (store) => store.delete(id));
   return { pozycja, zdjecia };
 }
 
@@ -806,22 +867,40 @@ export async function pobierzDaneFirmy() {
 }
 
 // UWAGA: `put()` na IndexedDB podmienia CAŁY rekord, nie scala pól - stąd
-// dociągnięcie obecnego `logo` przed zapisem. Bez tego zwykły zapis telefonu/
-// e-maila (formularz nie zna pola logo) wyzerowałby wcześniej wgrane logo.
+// dociągnięcie obecnego rekordu przed zapisem (żeby zapis telefonu/e-maila nie
+// wyzerował logo i odwrotnie). Same odczyt+zapis to jednak dwa osobne kroki -
+// bez kolejkowania dwa równoległe zapisy (np. zmiana telefonu i wybór nowego
+// logo tuż po sobie) czytają ten sam "obecny" stan PRZED zapisem tego drugiego,
+// więc ten, co zapisze jako drugi, cicho kasuje zmianę tego pierwszego
+// (classic lost update). `kolejkaZapisuFirmy` wymusza, żeby każdy zapis
+// czekał na zakończenie poprzedniego, więc zawsze widzi już zapisane zmiany.
+let kolejkaZapisuFirmy = Promise.resolve();
+function zapiszCzescDanychFirmy(patch) {
+  const wynik = kolejkaZapisuFirmy.then(async () => {
+    const db = await openDB();
+    const obecne = await pobierzDaneFirmy();
+    const dane = { ...obecne, ...patch };
+    await withStore(db, 'ustawienia', 'readwrite', (store) => store.put(dane));
+    return dane;
+  });
+  // Kolejka sama nigdy nie może zostać w stanie odrzuconym - inaczej jeden
+  // nieudany zapis zablokowałby cicho WSZYSTKIE kolejne (aż do przeładowania
+  // appki). Błąd i tak trafia do wywołującego przez zwrócone `wynik`.
+  kolejkaZapisuFirmy = wynik.catch(() => {});
+  return wynik;
+}
+
 export async function zapiszDaneFirmy({ nazwa, telefon, email }) {
-  const db = await openDB();
-  const obecne = await pobierzDaneFirmy();
-  const dane = { id: ID_USTAWIEN_FIRMY, nazwa: (nazwa || '').trim(), telefon: (telefon || '').trim(), email: (email || '').trim(), logo: obecne.logo || null };
-  await withStore(db, 'ustawienia', 'readwrite', (store) => store.put(dane));
-  return dane;
+  return zapiszCzescDanychFirmy({
+    id: ID_USTAWIEN_FIRMY,
+    nazwa: (nazwa || '').trim(),
+    telefon: (telefon || '').trim(),
+    email: (email || '').trim(),
+  });
 }
 
 // Logo firmy jako data URL (string) - osobna funkcja z tego samego powodu co
 // wyżej: zapis logo nie może wyzerować nazwy/telefonu/e-maila.
 export async function zapiszLogoFirmy(logoDataUrl) {
-  const db = await openDB();
-  const obecne = await pobierzDaneFirmy();
-  const dane = { ...obecne, logo: logoDataUrl || null };
-  await withStore(db, 'ustawienia', 'readwrite', (store) => store.put(dane));
-  return dane;
+  return zapiszCzescDanychFirmy({ id: ID_USTAWIEN_FIRMY, logo: logoDataUrl || null });
 }

@@ -271,10 +271,35 @@ body {
   margin-bottom: 10px;
   box-shadow: 0 1px 2px rgba(0,0,0,0.06);
 }
-.karta-projekt { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+.karta-projekt {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+.karta-projekt:active { transform: scale(0.98); background: var(--aktywne-tlo); }
 .karta-projekt .nazwa { font-weight: 600; font-size: 16px; }
 .karta-projekt .klient { color: var(--tekst-slaby); font-size: 13px; margin-top: 2px; }
 .karta-projekt .suma { font-weight: 600; color: var(--akcent); }
+/* Pasek postępu wpłat na karcie projektu - żeby "ile jeszcze zostało do
+   zapłaty" było widać od razu na liście, bez wchodzenia w projekt. */
+.pasek-wplat {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--linia);
+  margin-top: 6px;
+  overflow: hidden;
+}
+.pasek-wplat-wypelnienie {
+  height: 100%;
+  background: var(--sukces);
+  border-radius: 2px;
+  transition: width 0.6s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+@starting-style {
+  .pasek-wplat-wypelnienie { width: 0% !important; }
+}
 .odznaka-statusu {
   display: inline-flex;
   align-items: center;
@@ -416,7 +441,7 @@ body {
   .pozycja { opacity: 0; transform: translateY(6px); }
 }
 .pozycja:last-child { border-bottom: none; }
-.pozycja:active { background: var(--aktywne-tlo); }
+.pozycja:active { background: var(--aktywne-tlo); transform: scale(0.98); }
 .pozycja .nazwa { font-weight: 500; }
 .pozycja .szczegoly { font-size: 12px; color: var(--tekst-slaby); }
 .pozycja .kwota { font-weight: 600; white-space: nowrap; }
@@ -474,16 +499,30 @@ body {
 .btn-segment .ikona-svg { width: 14px; height: 14px; flex-shrink: 0; }
 .btn-segment.aktywny { background: var(--akcent); color: white; font-weight: 600; }
 
-/* ---- Pasek podziału kosztów wg kategorii ---- */
-.podzial-kosztow { margin-top: 14px; }
-.pasek-podzialu {
-  display: flex;
-  height: 14px;
-  border-radius: 7px;
-  overflow: hidden;
-  background: var(--linia);
+/* ---- Podział kosztów wg kategorii (pierścień/donut) ---- */
+.podzial-kosztow { margin-top: 14px; text-align: center; }
+.donut-podzialu {
+  width: 150px;
+  height: 150px;
+  display: block;
+  margin: 0 auto;
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
-.segment-paska { height: 100%; }
+@starting-style {
+  .donut-podzialu { opacity: 0; transform: scale(0.8); }
+}
+.donut-tlo { fill: none; stroke: var(--linia); stroke-width: 16; }
+.luk-donuta { fill: none; stroke-width: 16; }
+.donut-liczba {
+  font-family: var(--font-naglowek);
+  font-size: 22px;
+  font-weight: 700;
+  fill: var(--tekst);
+  text-anchor: middle;
+}
+.donut-etykieta { font-size: 8px; fill: var(--tekst-slaby); text-anchor: middle; text-transform: uppercase; letter-spacing: 0.03em; }
 .legenda {
   display: flex;
   flex-wrap: wrap;
@@ -565,8 +604,9 @@ body {
   background: var(--karta);
   color: var(--tekst);
   cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease;
 }
-.btn-nawigacja-okresu:active { background: var(--aktywne-tlo); }
+.btn-nawigacja-okresu:active { background: var(--aktywne-tlo); transform: scale(0.92); }
 .btn-nawigacja-okresu .ikona-svg { width: 18px; height: 18px; }
 .wiersz-miesiaca {
   display: flex;
@@ -582,6 +622,44 @@ body {
 .wiersz-miesiaca .liczba-miesiaca { flex-shrink: 0; font-size: 12px; color: var(--tekst-slaby); }
 .wiersz-miesiaca .kwota-miesiaca { flex-shrink: 0; font-weight: 600; white-space: nowrap; min-width: 90px; text-align: right; }
 .karta-projekt-podsumowania .szczegoly { margin-top: 1px; }
+
+/* Wykres trendu wpłat (widok roczny Podsumowania) - proste słupki CSS, bez
+   biblioteki wykresów. Wysokość liczona względem najwyższego miesiąca w
+   roku (nie względem sumy rocznej), żeby różnice między miesiącami było
+   widać nawet gdy jeden miesiąc dominuje. */
+.wykres-trendu {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 130px;
+  padding-top: 8px;
+}
+.slupek-wykresu {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  gap: 4px;
+  cursor: pointer;
+}
+.slupek-wypelnienie {
+  width: 100%;
+  max-width: 22px;
+  min-height: 3px;
+  background: var(--akcent-jasny, var(--akcent));
+  border-radius: 4px 4px 0 0;
+  opacity: 0.75;
+  transition: height 0.6s cubic-bezier(0.2, 0.9, 0.3, 1), opacity 0.15s ease;
+}
+@starting-style {
+  .slupek-wypelnienie { height: 0% !important; }
+}
+.slupek-wykresu:active .slupek-wypelnienie { opacity: 1; }
+.slupek-wypelnienie.biezacy { background: var(--akcent); opacity: 1; }
+.etykieta-slupka { font-size: 10px; color: var(--tekst-slaby); text-transform: uppercase; }
 
 dialog {
   border: none;
@@ -770,6 +848,41 @@ dialog.zamykanie::backdrop { opacity: 0; }
 }
 .uwaga-prywatnosc .ikona-svg { width: 18px; height: 18px; color: var(--sukces); flex-shrink: 0; margin-top: 1px; }
 
+/* Podpowiedź "dodaj do ekranu głównego" - w kolorze akcentu appki (nie
+   ostrzeżenia, nie sukcesu), z osobnym przyciskiem akcji i osobnym "x" do
+   trwałego ukrycia (localStorage, patrz KLUCZ_INSTALACJI_UKRYTEJ w app.js). */
+.uwaga-instalacja {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--tekst);
+  background: var(--akcent-tlo);
+  border: 1px solid var(--akcent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+.uwaga-instalacja .ikona-svg:first-child { width: 20px; height: 20px; color: var(--akcent); flex-shrink: 0; }
+.uwaga-instalacja span { flex: 1; min-width: 0; }
+.uwaga-instalacja #btn-zainstaluj { width: auto; flex-shrink: 0; padding: 8px 14px; font-size: 13px; }
+.btn-zamknij-baner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--tekst-slaby);
+  cursor: pointer;
+}
+.btn-zamknij-baner:active { background: var(--aktywne-tlo); }
+.btn-zamknij-baner .ikona-svg { width: 16px; height: 16px; }
+
 /* Nagłówek widoczny tylko na wydruku/PDF - ukryty na ekranie */
 .naglowek-druku { display: none; }
 
@@ -788,7 +901,13 @@ dialog.zamykanie::backdrop { opacity: 0; }
   .naglowek-druku .meta-druku { font-size: 13px; margin-top: 6px; }
   .naglowek-druku .logo-druk { max-height: 60px; max-width: 220px; display: block; margin-bottom: 8px; }
   .kategoria-naglowek, .pozycja, .platnosci-podsumowanie > div { color: black; }
-  .kropka, .segment-paska { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .kropka, .luk-donuta { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* Donut używa zmiennych motywu (--linia/--tekst/--tekst-slaby) - w trybie
+     ciemnym to jasne kolory, niewidoczne na białej kartce papieru (dokładnie
+     ten sam problem, który wiersz wyżej rozwiązuje dla .pozycja itp.). */
+  .donut-tlo { stroke: #e2e8f0; }
+  .donut-liczba, .donut-etykieta { fill: black; }
+  .legenda { color: black; }
   .znacznik-zdjec { display: none; }
 }
 
