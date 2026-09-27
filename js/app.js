@@ -1895,10 +1895,6 @@ function zamknijDialog() {
   dialog.addEventListener('transitionend', zakoncz, { once: true });
   setTimeout(zakoncz, 200);
 }
-dialog.addEventListener('click', (e) => {
-  if (e.target === dialog) zamknijDialog();
-});
-
 // ---------- Toast "Cofnij" (siatka bezpieczeństwa po usunięciu) ----------
 // Usuwanie kasuje z bazy OD RAZU (nie ma "kosza" ani odroczonego kasowania) -
 // to `akcjaCofnij` przywraca dokładnie ten sam rekord z powrotem, gdyby ktoś

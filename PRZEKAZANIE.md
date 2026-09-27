@@ -635,6 +635,20 @@ napraw"):**
 liczbami w przeglądarce, dane testowe posprzątane. `sw.js` → `CACHE_NAZWA`
 na `majster-v30`.
 
+### Runda: kliknięcie w tło nie ma już zamykać okienek (2026-09-27)
+
+Użytkownik zgłosił, że kliknięcie obok okienka "Nowa pozycja" wyrzucało go z
+formularza z powrotem do kosztorysu (podejrzewał najpierw gest myszą, po
+doprecyzowaniu okazało się to kliknięciem w tło). Diagnoza: `dialog.
+addEventListener('click', (e) => { if (e.target === dialog) zamknijDialog();
+})` (klasyczny wzorzec "klik w tło zamyka dialog") - usunięty na wyraźną
+prośbę, **teraz jedyne sposoby zamknięcia to przycisk "Anuluj"/"Zamknij"/"X"
+w danym oknie oraz klawisz Escape** (natywna obsługa `<dialog>`, nieusuwana).
+Sprawdzone: wszystkie 9 miejsc wywołujących `otworzDialog()` mają własny,
+jawny przycisk zamykający - żadne okno nie zostaje "bez wyjścia".
+Zweryfikowane w przeglądarce: klik w tło już nie zamyka (dialog zostaje
+otwarty), przycisk "Anuluj" nadal poprawnie zamyka i wraca do kosztorysu.
+
 ## Czego NIE udało się sprawdzić
 
 - **Rzeczywiste działanie na fizycznym iPhone** — testowałem w Browser

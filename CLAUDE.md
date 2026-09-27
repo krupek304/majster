@@ -144,6 +144,18 @@ zielone, bezwartościowe wyniki. Zawsze sprawdź na starcie, czy dane w ogóle s
   po zmianie `CACHE_NAZWA`).
 - Heredoc w Bashu przy długich plikach potrafi się urwać. Do pisania plików
   używaj `Write`, nie `cat << EOF`.
+- **Natywny `<datalist>` (podpowiedzi w `<input list="...">`, np. pole
+  "Pomieszczenie") potrafi wyskoczyć w KOMPLETNIE złym miejscu na ekranie w
+  podglądzie Browser pane** — np. nad panelem czatu Claude po lewej, zamiast
+  pod polem po prawej. To nakładka rysowana przez silnik przeglądarki poza
+  drzewem strony (nie kontroluje jej CSS appki), a Browser pane jest
+  przeglądarką osadzoną WEWNĄTRZ okna Claude Code — stąd złe współrzędne.
+  Sprawdzone empirycznie 2026-09-27: w zwykłym Chrome na tym samym
+  komputerze (ten sam `http://localhost:5501`) to samo pole działa
+  poprawnie. Zanim zaczniesz "naprawiać" dropdown/select/datalist, który źle
+  się pozycjonuje — każ userowi sprawdzić w zwykłej przeglądarce, zanim
+  cokolwiek zmienisz w kodzie. To problem samego narzędzia do podglądu, nie
+  appki ani realnego telefonu.
 
 ## Historia zmian
 
