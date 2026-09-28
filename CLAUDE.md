@@ -142,6 +142,23 @@ zielone, bezwartościowe wyniki. Zawsze sprawdź na starcie, czy dane w ogóle s
   realnego hostingu (GitHub Pages + realna instalacja PWA nie mają tego
   problemu — tam SW aktualizuje się przez zwykły mechanizm `controllerchange`
   po zmianie `CACHE_NAZWA`).
+  3. **Cięższy wariant tego samego problemu (2026-09-28): nawet PEŁNE**
+     **obejście z punktu 1+2 razem (unregister SW + `caches.delete()` +**
+     **`?v=`/`?r=` w URL + pełny `preview_stop`/`preview_start`) potrafi**
+     **nadal nie wystarczyć.** Objaw: świeżo wstrzyknięta zmienna
+     diagnostyczna w `window` zostaje `undefined` mimo wielu przeładowań,
+     mimo że zwykły `fetch()` tej samej ścieżki w tej samej konsoli zwraca
+     poprawną, świeżą treść pliku. Jedyny sposób, który zadziałał na pewno:
+     w konsoli karty wykonać
+     `await import('/js/plik.js?zupelnieNowyParam=' + Date.now() + Math.random())`
+     — dynamiczny import z parametrem, którego NIGDY wcześniej nie było w
+     żadnym URL w tej sesji, więc żadna warstwa (SW, cache HTTP
+     przeglądarki, ewentualne proxy między kartą a `python -m http.server`)
+     nie mogła mieć go zapisanego. Zwykłe bumpowanie `?v=` na stały,
+     powtarzany string NIE wystarcza — musi być **nowy, niepowtarzalny**
+     parametr przy każdej próbie. Nie ustalono, która dokładnie warstwa
+     była winna tym razem — obejście zadziałało bez potrzeby diagnozowania
+     do końca.
 - Heredoc w Bashu przy długich plikach potrafi się urwać. Do pisania plików
   używaj `Write`, nie `cat << EOF`.
 - **Natywny `<datalist>` (podpowiedzi w `<input list="...">`, np. pole

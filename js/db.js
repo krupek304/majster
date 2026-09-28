@@ -181,7 +181,7 @@ async function zapewnijDaneStartowe(db) {
     // Max+1, nie .length - po usunięciu którejś kategorii w numeracji `kolejnosc`
     // zostają luki (patrz identyczny komentarz przy `dodajKategorie`), więc
     // .length mógłby trafić na już zajętą wartość i popsuć kolejność sortowania.
-    let kolejnosc = istniejaceKategorie.reduce((max, k) => Math.max(max, k.kolejnosc), -1) + 1;
+    let kolejnosc = istniejaceKategorie.reduce((max, k) => Math.max(max, Number.isFinite(k.kolejnosc) ? k.kolejnosc : -1), -1) + 1;
     await withStore(db, 'kategorie', 'readwrite', (store) => {
       brakujaceKategorie.forEach((nazwa) => {
         store.put({ id: cryptoId(), nazwa, kolejnosc: kolejnosc++ });
@@ -396,11 +396,20 @@ export async function pobierzKategorie() {
 export async function dodajKategorie(nazwa) {
   const db = await openDB();
   const istniejace = await pobierzKategorie();
+  const nazwaPrzycieta = nazwa.trim();
+  // Bez tego dwie kategorie mogłyby mieć tę samą nazwę - a usuwanie kategorii
+  // (usunKategorieRazemZCennikiem) kasuje pozycje cennika PO NAZWIE, więc przy
+  // duplikacie usunięcie jednej skasowałoby też cennik tej drugiej, wciąż
+  // istniejącej kategorii. Porównanie bez rozróżniania wielkości liter, żeby
+  // "Podłogi" i "podłogi" też liczyły się jako ta sama nazwa.
+  if (istniejace.some((k) => k.nazwa.trim().toLowerCase() === nazwaPrzycieta.toLowerCase())) {
+    throw new Error(`Kategoria „${nazwaPrzycieta}” już istnieje.`);
+  }
   // Max+1, nie .length - po usunięciu kategorii (usunKategorieRazemZCennikiem)
   // w numeracji `kolejnosc` zostają luki, więc .length mógłby trafić na już
   // zajętą wartość (np. kategorie 0,1,3,4 mają length=4, a 4 jest zajęte).
-  const kolejnosc = istniejace.reduce((max, k) => Math.max(max, k.kolejnosc), -1) + 1;
-  const kategoria = { id: cryptoId(), nazwa: nazwa.trim(), kolejnosc, ukryta: false };
+  const kolejnosc = istniejace.reduce((max, k) => Math.max(max, Number.isFinite(k.kolejnosc) ? k.kolejnosc : -1), -1) + 1;
+  const kategoria = { id: cryptoId(), nazwa: nazwaPrzycieta, kolejnosc, ukryta: false };
   await withStore(db, 'kategorie', 'readwrite', (store) => store.put(kategoria));
   return kategoria;
 }
@@ -415,27 +424,39 @@ export async function aktualizujKategorie(kategoria) {
 // Pozycje kosztorysu w już zapisanych projektach NIE są usuwane ani
 // blokujące - zachowują nazwę kategorii jako zwykły tekst i dalej liczą się
 // poprawnie (ostrzeżenie z liczbą pokazuje się w UI przed potwierdzeniem).
+// Czyta tombstone (`ustawienia`), dopisuje do niego i zapisuje - dokładnie ten
+// sam kształt "read-modify-write bez serializacji", który już raz spowodował
+// zgubiony zapis w zapiszDaneFirmy (patrz kolejkaZapisuFirmy wyżej). Dwa
+// szybkie usunięcia kategorii pod rząd (zanim pierwsze zdąży się zapisać)
+// mogłyby nadpisać się nawzajem i zgubić jeden z wpisów tombstone - stąd
+// osobna kolejka, żeby całe usunięcie (odczyt cennika+tombstone, zapis)
+// zawsze wykonywało się w całości, jedno po drugim.
+let kolejkaUsuwaniaKategorii = Promise.resolve();
 export async function usunKategorieRazemZCennikiem(kategoriaId, nazwaKategorii) {
-  const db = await openDB();
-  const [calyCennik, usunieteNaStale] = await Promise.all([
-    getAll(db, 'cennik'),
-    pobierzUsunieteDomyslneKategorie(db),
-  ]);
-  const cennikDoUsuniecia = calyCennik.filter((c) => c.kategoria === nazwaKategorii);
-  // Kategoria domyślna wraca inaczej niż użytkownika własna: `zapewnijDaneStartowe`
-  // dogrywa brakujące domyślne kategorie PO NAZWIE przy każdym starcie appki (dla
-  // aktualizacji z nowszej wersji) - bez tego wpisu "usunięto na stałe" wróciłaby
-  // przy następnym otwarciu appki, mimo usunięcia. Wszystko w jednej transakcji,
-  // żeby usunięcie kategorii+cennika i zapamiętanie tombstone było atomowe.
-  if (DOMYSLNE_KATEGORIE.includes(nazwaKategorii)) usunieteNaStale.add(nazwaKategorii);
-  await withStores(db, ['cennik', 'kategorie', 'ustawienia'], 'readwrite', (stores) => {
-    cennikDoUsuniecia.forEach((c) => stores.cennik.delete(c.id));
-    stores.kategorie.delete(kategoriaId);
-    if (DOMYSLNE_KATEGORIE.includes(nazwaKategorii)) {
-      stores.ustawienia.put({ id: ID_USUNIETYCH_KATEGORII, nazwy: [...usunieteNaStale] });
-    }
+  const wynik = kolejkaUsuwaniaKategorii.then(async () => {
+    const db = await openDB();
+    const [calyCennik, usunieteNaStale] = await Promise.all([
+      getAll(db, 'cennik'),
+      pobierzUsunieteDomyslneKategorie(db),
+    ]);
+    const cennikDoUsuniecia = calyCennik.filter((c) => c.kategoria === nazwaKategorii);
+    // Kategoria domyślna wraca inaczej niż użytkownika własna: `zapewnijDaneStartowe`
+    // dogrywa brakujące domyślne kategorie PO NAZWIE przy każdym starcie appki (dla
+    // aktualizacji z nowszej wersji) - bez tego wpisu "usunięto na stałe" wróciłaby
+    // przy następnym otwarciu appki, mimo usunięcia. Wszystko w jednej transakcji,
+    // żeby usunięcie kategorii+cennika i zapamiętanie tombstone było atomowe.
+    if (DOMYSLNE_KATEGORIE.includes(nazwaKategorii)) usunieteNaStale.add(nazwaKategorii);
+    await withStores(db, ['cennik', 'kategorie', 'ustawienia'], 'readwrite', (stores) => {
+      cennikDoUsuniecia.forEach((c) => stores.cennik.delete(c.id));
+      stores.kategorie.delete(kategoriaId);
+      if (DOMYSLNE_KATEGORIE.includes(nazwaKategorii)) {
+        stores.ustawienia.put({ id: ID_USUNIETYCH_KATEGORII, nazwy: [...usunieteNaStale] });
+      }
+    });
+    return { usunietoZCennika: cennikDoUsuniecia.length };
   });
-  return { usunietoZCennika: cennikDoUsuniecia.length };
+  kolejkaUsuwaniaKategorii = wynik.catch(() => {});
+  return wynik;
 }
 
 // Przywraca fabryczny cennik i listę kategorii - kasuje WSZYSTKIE kategorie
@@ -593,7 +614,12 @@ export async function importujCalaBaze(kopia) {
     await withStore(db, 'kategorie', 'readwrite', (store) => {
       importowaneKategorie.forEach((k) => {
         const juzIstnieje = mapaPoNazwie.get(k.nazwa);
-        store.put(juzIstnieje ? { ...juzIstnieje, ukryta: k.ukryta, kolejnosc: k.kolejnosc } : k);
+        // `k.kolejnosc` z pliku kopii może brakować/być zepsute (ręczna edycja,
+        // stara wersja appki) - bez zabezpieczenia NaN raz wpisane do rekordu
+        // zatruwa sortowanie (`a.kolejnosc - b.kolejnosc`) na stałe, bo NaN+1
+        // wciąż daje NaN przy każdym kolejnym dodaniu kategorii.
+        const kolejnosc = Number.isFinite(k.kolejnosc) ? k.kolejnosc : (juzIstnieje?.kolejnosc ?? 0);
+        store.put(juzIstnieje ? { ...juzIstnieje, ukryta: k.ukryta, kolejnosc } : { ...k, kolejnosc });
       });
     });
   }
@@ -623,10 +649,10 @@ export async function importujCalaBaze(kopia) {
       continue;
     }
     // Plik kopii to dane z zewnątrz (mógł być ręcznie edytowany albo pochodzić
-    // ze starszej wersji appki) - `pobierzPozycjeProjektu` sortuje pozycje po
-    // `data` i wywali się (`undefined.localeCompare`), jeśli rekordowi tego
-    // pola brakuje. Dogrywamy bezpieczną wartość zamiast wywalać cały import.
-    if (nazwaStore === 'pozycje') {
+    // ze starszej wersji appki) - `pobierzPozycjeProjektu`/`pobierzPlatnosciProjektu`
+    // sortują po `data` i wywalą się (`undefined.localeCompare`), jeśli rekordowi
+    // tego pola brakuje. Dogrywamy bezpieczną wartość zamiast wywalać cały import.
+    if (nazwaStore === 'pozycje' || nazwaStore === 'platnosci') {
       rekordy = rekordy.map((r) => (r.data ? r : { ...r, data: new Date().toISOString() }));
     }
     await withStore(db, nazwaStore, 'readwrite', (store) => {

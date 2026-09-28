@@ -41,7 +41,14 @@ export function sumaCalkowita(pozycje) {
 }
 
 export function sumaPlatnosci(platnosci) {
-  return platnosci.reduce((acc, p) => Math.round((acc + Number(p.kwota || 0)) * 100) / 100, 0);
+  // `Number(p.kwota || 0)` samo nie chroni przed NaN (np. `p.kwota` to
+  // nieliczbowy string z ręcznie edytowanego importu) - a NaN w reduce
+  // zatruwa CAŁĄ sumę na stałe (NaN + cokolwiek = NaN), więc jedna zepsuta
+  // wpłata cicho zerowałaby widoczną sumę wszystkich poprawnych wpłat.
+  return platnosci.reduce((acc, p) => {
+    const kwota = Number(p.kwota);
+    return Math.round((acc + (Number.isFinite(kwota) ? kwota : 0)) * 100) / 100;
+  }, 0);
 }
 
 export function formatujKwote(kwota) {

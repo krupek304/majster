@@ -20,10 +20,26 @@
 
 /* Krótkotrwała klasa na <html> na czas przełączania motywu (dodawana/zdejmowana
    w zastosujMotyw()) - żeby zmiana jasny/ciemny/systemowy przenikała płynnie.
-   `!important` bo cel to NADPISAĆ istniejące, krótsze transition (np. tap-
-   feedback na przyciskach) tylko na te ~350ms, nie zostawić tego na stałe. */
-html.zmiana-motywu, html.zmiana-motywu * {
-  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, fill 0.3s ease !important;
+   UWAGA - DWA błędy znalezione i naprawione tu 2026-09-28:
+   1) Pierwsza wersja używała `!important`, co (przez wyższą specyficzność
+      `html.zmiana-motywu *` względem zwykłych reguł typu `.karta-projekt`)
+      podmieniało transition-property na SAME kolory - żadna inna animacja
+      (wjazd list, FLIP przy sortowaniu, donut, wykres) się nie odgrywała.
+   2) Nawet po zamianie na `transition-property` z pełną listą, `!important`
+      nadal bił inline `el.style.transition = 'none'`, którego FLIP używa do
+      CICHEGO (bez animacji) ustawienia pozycji startowej - w oknie zmiany
+      motywu ten "cichy" krok SAM się animował, więc FLIP i tak wyglądał
+      błędnie (karty drgały zamiast płynnie przejechać).
+   Naprawa: BEZ `!important` i BEZ prefiksu "html" w selektorze - specyficzność
+   `.zmiana-motywu *` (0,1,0) jest RÓWNA specyficzności pojedynczej klasy jak
+   `.karta-projekt`, więc o pierwszeństwie decyduje kolejność w pliku. Ta
+   reguła stoi blisko początku pliku, więc każda specyficzna reguła transition
+   zdefiniowana PÓŹNIEJ (.karta-projekt, .pozycja, .btn, ...) naturalnie ją
+   przykrywa i działa dokładnie jak bez tej funkcji - płynne kolory dostają
+   tylko elementy bez WŁASNEJ reguły transition (większość zwykłych div/span),
+   nic nigdy nie jest nadpisywane wbrew swojej logice. */
+.zmiana-motywu * {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, fill 0.3s ease;
 }
 
 /* "Rozwinięcie" karty projektu w kosztorys (patrz NAZWA_MORFOWANIA_KARTY w
@@ -98,6 +114,14 @@ html.zmiana-motywu, html.zmiana-motywu * {
   --blad: #f87171;
   --uwaga-tlo: #422006;
   --uwaga-ramka: #7c2d12;
+  /* Brakowało tych dwóch w tym bloku (błąd znaleziony 2026-09-28) - blok
+     @media (prefers-color-scheme: dark) wyżej je ma, ten (wymuszony "Ciemny"
+     w Ustawieniach) nie, więc spadały do jasnych wartości z :root. Jedyny
+     konsument to .uwaga-prywatnosc (komunikat o prywatności danych) - z tym
+     błędem, przy wymuszonym trybie ciemnym, prawie biały tekst (--tekst) lądował
+     na bladozielonym tle zamiast ciemnozielonego - nieczytelne. */
+  --sukces-tlo: #052e16;
+  --sukces-ramka: #14532d;
   --aktywne-tlo: #172033;
   --akcent-tlo: rgba(251, 146, 60, 0.16);
 }
@@ -718,7 +742,12 @@ body {
   .slupek-wypelnienie { height: 0% !important; }
 }
 .slupek-wykresu:active .slupek-wypelnienie { opacity: 1; }
-.slupek-wypelnienie.biezacy { background: var(--akcent); opacity: 1; }
+/* Nie polegać TYLKO na kolorze - w trybie ciemnym --akcent i --akcent-jasny
+   są celowo identyczne (ten sam token służy gdzie indziej, np. do kontrastu
+   ikon na granatowym tle), więc sama zmiana koloru nie odróżniała "bieżącego"
+   miesiąca od reszty (błąd znaleziony 2026-09-28). Obwódka działa niezależnie
+   od motywu. */
+.slupek-wypelnienie.biezacy { background: var(--akcent); opacity: 1; box-shadow: 0 0 0 2px var(--tlo), 0 0 0 3px var(--akcent); }
 .etykieta-slupka { font-size: 10px; color: var(--tekst-slaby); text-transform: uppercase; }
 
 dialog {

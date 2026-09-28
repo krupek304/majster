@@ -840,6 +840,138 @@ Do przeglądu 2026-09-27 (błędy z kodu) dodatkowo:
   przycisków-ikon.
 - **`MAPA.md` nieaktualny** (patrz uwaga wyżej) - nie odświeżony w tej rundzie.
 
+### Runda: drugi przegląd kodu pod kątem błędów (2026-09-28, po rundzie animacji)
+
+Ta sama prośba co poprzednio ("sprawdź kod pod kątem błędów, luk czy
+jakichkolwiek nieprawidłowości i napraw je"), zastosowana głównie do świeżo
+dodanych 7 zaawansowanych animacji z poprzedniej rundy, plus ogólny przegląd
+`db.js`/`calc.js`. Trzy niezależne agenty przeglądowe (poprawność w
+`app.js`-animacjach, poprawność w `db.js`/`calc.js`, CSS/PWA/konwencje).
+Każde zgłoszenie zweryfikowane czytaniem kodu i konkretną liczbą
+przed/po w konsoli przeglądarki, nie na słowo agenta.
+
+**Naprawione, z liczbami:**
+
+- `sumaPlatnosci` (`calc.js`) nie chroniła przed `NaN` w pojedynczej wpłacie
+  (np. nieliczbowy `kwota` po ręcznie edytowanym imporcie) - `NaN` w `reduce`
+  zatruwał całą sumę na stałe. Test: `[500, 'brak', 300]` → **przed: `NaN`,
+  po: 800**.
+- `dodajKategorie` pozwalała dodać kategorię o nazwie identycznej (także z
+  różną wielkością liter) z już istniejącą - teraz rzuca błędem. Test:
+  duplikat dokładnej/DUŻYMI LITERAMI nazwy → **odrzucony (14→14)**; unikalna
+  nazwa nadal działa (**14→15**, posprzątane).
+- `usunKategorieRazemZCennikiem` miała wyścig odczyt-modyfikacja-zapis na
+  rekordzie "kategorii usuniętych na stałe" - dwa równoległe usunięcia mogły
+  nadpisać się nawzajem (jedna nazwa cicho gubiona z listy tombstone).
+  Naprawione kolejkowaniem (wzorzec identyczny jak wcześniejszy
+  `kolejkaZapisuFirmy`). Test: dwa równoległe usunięcia (`Promise.all`) →
+  **14→12**, obie nazwy nadal na liście "usuniętych na stałe" po symulacji
+  restartu appki (przed poprawką jedna by przepadła). Przywrócone
+  `przywrocDomyslnyCennik()` → z powrotem 14/60.
+- Import kopii zapasowej: brakujące pole `data` w rekordach `platnosci`
+  (tylko `pozycje` miały wcześniej ten fallback) mogło wywalić sortowanie
+  `.data.localeCompare()` na `undefined`. Dogrywana bezpieczna wartość, jak
+  już wcześniej dla `pozycje`.
+- Import kopii zapasowej: `kolejnosc` kategorii z uszkodzonego/ręcznie
+  edytowanego pliku importu (`NaN`) psuła kolejność wyświetlania -
+  dogrywana bezpieczna wartość zamiast `NaN`.
+- **Fałszywy puls dzwonka przy zimnym starcie** - jeśli appka miała
+  nieprzeczytane powiadomienia z poprzedniej sesji, dzwonek pulsował od razu
+  po starcie (jakby przyszło NOWE powiadomienie), bo baza porównania
+  (`poprzedniaLiczbaPowiadomien`) ustawiała się PO sprawdzeniu nowych
+  powiadomień projektów/kopii zapasowej, nie przed. Naprawione zmianą
+  kolejności bootowania. Test (świeże wywołanie modułu, symulacja starego
+  stanu z nieprzeczytanymi powiadomieniami): **przed poprawką puls przy
+  starcie mimo braku nowych powiadomień, po poprawce `liczba ===
+  poprzedniaLiczbaPowiadomien` (6===6), brak pulsu**.
+- `.zmiana-motywu` (płynne przenikanie kolorów przy zmianie motywu, z
+  poprzedniej rundy) używała `!important` na liście `transition-property` -
+  to nadpisywało TAKŻE inline `style.transition = 'none'`, którego FLIP
+  (płynne przesuwanie kart przy sortowaniu) używa do "cichego" ustawienia
+  pozycji startowej bez animacji. Efekt: sortowanie klikane w oknie 350ms po
+  zmianie motywu gubiło animację FLIP (karty "skakały" zamiast płynnie
+  przesuwać). Naprawione usunięciem `!important` - reguła działa przez samą
+  specyficzność/kolejność w pliku (umieszczona wcześniej niż reguły
+  komponentów typu `.karta-projekt`, które przy równej specyficzności
+  wygrywają jako późniejsze). Zweryfikowane: `transitionProperty` w oknie
+  motywu nadal poprawnie ustawiony na elementach bez własnej reguły, FLIP
+  ponownie płynny nawet w trakcie zmiany motywu (8 klatek pozycji:
+  285→237→191→166→157→157→163→167, widoczne odbicie sprężyste, bez
+  przycinania).
+- `ustawWidok` (przejście karta→kosztorys, View Transitions) - dwa szybkie
+  kolejne kliknięcia różnych kart mogły ustawić `view-transition-name` na
+  DWÓCH żywych elementach naraz (twardy błąd API: "duplicate view-transition-
+  name") oraz starsze, wolniejsze przejście mogło w swoim sprzątaniu
+  skasować tag należący już do nowszego, wciąż trwającego przejścia.
+  Naprawione licznikiem generacji + jedną funkcją `ustawNazweMorfowania`,
+  która zawsze najpierw zdejmuje tag z poprzedniego elementu.
+- FLIP na liście projektów: każda karta dostawała WŁASNY
+  `requestAnimationFrame`, co przy szybkim podwójnym kliknięciu przycisku
+  sortowania powodowało odczyt nieaktualnych (już przestarzałych) pozycji w
+  drugim wywołaniu. Naprawione jednym współdzielonym uchwytem `rAF` z
+  `cancelAnimationFrame` poprzedniego, zanim zaplanuje się nowy.
+- `zastosujMotyw` nie czyściła poprzedniego `setTimeout` przy szybkiej
+  zmianie motywu kilka razy pod rząd - nakładające się timery mogły zdjąć
+  klasę `.zmiana-motywu` przedwcześnie (w środku animacji kolejnej zmiany).
+  Naprawione `clearTimeout` przed ustawieniem nowego.
+- `:root[data-motyw="ciemny"]` (wymuszony tryb ciemny z Ustawień, w
+  odróżnieniu od `@media (prefers-color-scheme: dark)`) nie miał
+  `--sukces-tlo`/`--sukces-ramka` - baner prywatności (`.uwaga-prywatnosc`)
+  był w tym trybie prawie nieczytelny (jasny tekst na jasnozielonym tle).
+  Dopisane te same wartości co w gałęzi `prefers-color-scheme`. Zweryfikowane
+  wizualnie zrzutem ekranu - biały tekst czytelny na ciemnozielonym tle.
+- `.slupek-wypelnienie.biezacy` (podświetlenie bieżącego miesiąca na
+  wykresie trendu) było niewidoczne w trybie ciemnym, bo `--akcent`/
+  `--akcent-jasny` są tam celowo identyczne (do innego celu gdzie indziej) -
+  sam kolor nie odróżniał słupka. Dodana obwódka `box-shadow` niezależna od
+  motywu. **Zweryfikowane wizualnie zrzutem ekranu** (wrzesień, wpłata
+  testowa 300 zł) - delikatna, czytelna obwódka widoczna wokół słupka.
+
+**Poważna pułapka narzędziowa znaleziona przy weryfikacji (nie błąd kodu):**
+standardowy pełny sposób obejścia cache w Browser pane (wyrejestrowanie
+Service Workera + `caches.delete()` + cache-bust `?v=`/`?r=` w URL strony +
+pełny restart `preview_stop`/`preview_start`) **okazał się niewystarczający**
+przy tej rundzie - diagnostyczna flaga w `window` pozostawała `undefined`
+mimo że zwykły `fetch()` pliku pokazywał świeżą treść. Jedyny w pełni
+niezawodny sposób sprawdzenia świeżego kodu: `await import('/js/plik.js?
+zupelnieNowyParam=' + Date.now() + Math.random())` wprost w konsoli karty -
+dynamiczny import z parametrem URL, którego NIGDY wcześniej nie było, więc
+żadna warstwa cache'owania (Service Worker, cache HTTP przeglądarki, ani
+żadne ewentualne proxy między kartą a `python -m http.server`) nie mogła
+mieć go zapisanego. Zwykłe bumpowanie `?v=` NIE wystarcza, gdy winowajcą
+jest Service Worker przechwytujący `fetch` dla modułów ES. Zapisane też w
+`CLAUDE.md` (sekcja pułapek), obok wcześniejszej, łagodniejszej wersji tego
+samego problemu.
+
+`node --check` bez błędów na `app.js`/`db.js`/`calc.js`/`sw.js`,
+`calc.test.mjs` **16/16 OK**, CSS: liczba `{` = liczba `}` = 261 (sanity
+check składni, brak parsera CSS pod ręką). Dane testowe (3 projekty
+`__TEST fixA/fixB/fixC`, ich pozycje/płatności, powiadomienia) usunięte po
+teście - **przed sprzątaniem: 3 projekty testowe, po: 0** (środowisko
+testowe wróciło do 0 projektów / 14 kategorii / 60 pozycji cennika).
+Cofnięty tymczasowy cache-bust `?v=fix3` z `index.html` (powrót do zwykłego
+`css/style.css`). `sw.js` → `CACHE_NAZWA` na `majster-v33` (uwzględnia
+zmiany CSS wprowadzone już po v32).
+
+**Czego NIE udało się sprawdzić w tej rundzie:**
+- Wyścig w `usunKategorieRazemZCennikiem` zweryfikowany tylko przez
+  `Promise.all` w konsoli (dwa wywołania startujące w tym samym ticku) - nie
+  odtworzyłem subtelniejszego, bardziej realistycznego wyścigu (np. drugie
+  kliknięcie 50ms po pierwszym, nie dokładnie równocześnie).
+  Kolejkowanie i tak gwarantuje serializację z definicji, więc oba
+  przypadki powinny być bezpieczne identycznie.
+- `ustawWidok`/View Transitions - poprawka na "dwa jednoczesne przejścia"
+  sprawdzona tylko przez kolejne (nie dosłownie jednoczesne) kliknięcia w
+  Browser pane; nie wymusiłem programowo dwóch przejść startujących w
+  dokładnie tym samym mikrozadaniu.
+- Root cause samej awarii cache'owania w Browser pane pozostaje nieustalony
+  do końca (nie wiadomo, czy to SW, proxy, czy coś trzeciego) - działa
+  jedynie pewne obejście, nie naprawa przyczyny (i nie ma jej co naprawiać,
+  to narzędzie deweloperskie, nie kod appki - patrz `CLAUDE.md`).
+- Jak poprzednio: brak testu na fizycznym telefonie dla wszystkiego z tej
+  rundy (animacje CSS/View Transitions na realnym iOS Safari nadal
+  niezweryfikowane poza Browser pane).
+
 ## Co zostaje otwarte
 
 - **Dodać nowy adres do ekranu głównego** (`https://krupek304.github.io/o-majster/`)

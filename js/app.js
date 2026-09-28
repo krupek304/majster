@@ -222,13 +222,19 @@ function pobierzMotyw() {
     return 'system';
   }
 }
+let zdjecieKlasyMotywu = null;
 function zastosujMotyw(motyw) {
   // Krótkie okno globalnej transition na kolorach (patrz CSS `.zmiana-motywu`)
   // - żeby przełączenie jasny/ciemny/systemowy przenikało płynnie zamiast
   // skakać skokowo. Zdjęte po 350ms, żeby nie spowalniać innych, normalnych
   // zmian koloru w appce (np. odznaki statusu) przez resztę sesji.
+  // `clearTimeout` poprzedniego - bez tego dwie szybkie zmiany motywu pod rząd
+  // (np. Ciemny, a po chwili Systemowy) miałyby ścigające się timeouty: ten ze
+  // STARSZEJ zmiany odpaliłby się jako pierwszy i zdjąłby klasę przedwcześnie,
+  // ucinając płynne przejście dla tej NOWSZEJ, właściwej zmiany.
+  clearTimeout(zdjecieKlasyMotywu);
   document.documentElement.classList.add('zmiana-motywu');
-  setTimeout(() => document.documentElement.classList.remove('zmiana-motywu'), 350);
+  zdjecieKlasyMotywu = setTimeout(() => document.documentElement.classList.remove('zmiana-motywu'), 350);
   if (motyw === 'jasny' || motyw === 'ciemny') {
     document.documentElement.setAttribute('data-motyw', motyw);
   } else {
@@ -393,8 +399,29 @@ const NAZWA_MORFOWANIA_KARTY = 'karta-projektu-aktywna';
 // sama animuje przejście z kształtu/pozycji karty w pełny ekran, zamiast
 // zwykłego cross-fade. Bez wsparcia przeglądarki (i bez podanego elementu)
 // appka po prostu przełącza widok - efekt jest czysto kosmetyczny.
+// Najwyżej JEDEN żywy element na raz może nosić NAZWA_MORFOWANIA_KARTY - bez
+// tego dwa szybkie kliknięcia w RÓŻNE karty projektów (zanim pierwsze zdąży
+// usunąć swoją kartę z DOM w trakcie asynchronicznego render()) mogłyby nadać
+// tę samą view-transition-name dwóm żywym elementom naraz, co View Transitions
+// API traktuje jako twardy błąd i pomija animację zamiast ją odegrać. Ta
+// funkcja jest jedynym miejscem, które nadaje tę nazwę - zawsze najpierw
+// zdejmuje ją z poprzedniego nosiciela.
+let elementZTagiemMorfowania = null;
+function ustawNazweMorfowania(el) {
+  if (elementZTagiemMorfowania) elementZTagiemMorfowania.style.viewTransitionName = '';
+  elementZTagiemMorfowania = el;
+  if (el) el.style.viewTransitionName = NAZWA_MORFOWANIA_KARTY;
+}
+
+// Licznik "generacji" - gdy w trakcie jednej nawigacji (np. kliknięta karta
+// wskazuje na projekt, który zniknął z bazy) wystartuje KOLEJNA, nowsza
+// nawigacja, sprzątanie tej starszej nie może zgasić nazwy/tagów należących
+// już do tej nowszej.
+let generacjaMorfowania = 0;
+
 function ustawWidok(widok, projektId = null, elementZrodlowy = null) {
-  if (elementZrodlowy) elementZrodlowy.style.viewTransitionName = NAZWA_MORFOWANIA_KARTY;
+  const mojaGeneracja = ++generacjaMorfowania;
+  if (elementZrodlowy) ustawNazweMorfowania(elementZrodlowy);
   const wykonaj = async () => {
     state.widok = widok;
     state.projektId = projektId;
@@ -403,15 +430,13 @@ function ustawWidok(widok, projektId = null, elementZrodlowy = null) {
       else btn.removeAttribute('aria-current');
     });
     await render();
-    if (widok === 'kosztorys') {
+    if (widok === 'kosztorys' && mojaGeneracja === generacjaMorfowania) {
       const celMorfowania = app.querySelector('.uwaga');
-      if (celMorfowania) celMorfowania.style.viewTransitionName = NAZWA_MORFOWANIA_KARTY;
+      if (celMorfowania) ustawNazweMorfowania(celMorfowania);
     }
   };
   const posprzatajNazwy = () => {
-    if (elementZrodlowy) elementZrodlowy.style.viewTransitionName = '';
-    const celMorfowania = app.querySelector('.uwaga');
-    if (celMorfowania) celMorfowania.style.viewTransitionName = '';
+    if (mojaGeneracja === generacjaMorfowania) ustawNazweMorfowania(null);
   };
   // View Transitions API - natywne przejście (cross-fade) między ekranami.
   // Bez wsparcia przeglądarki (starsze niż Safari 18) po prostu renderuje od razu.
@@ -633,6 +658,7 @@ function formatujDateYMD(dataYMD) {
 // "znikanie i pojawianie się") liczymy pozycje PRZED i PO (technika FLIP) i
 // animujemy przesunięcie. Domyślnie (pierwsze wejście, wynik szukania) karty
 // dostają zwykły wjazd z klasą `.nowa` (fade+translate, patrz CSS).
+let flipRaf = null;
 function renderListaProjektow(zAnimacjaFlip = false) {
   const kontenerPrzed = document.getElementById('lista-projektow');
   const stareRects = new Map();
@@ -678,6 +704,14 @@ function renderListaProjektow(zAnimacjaFlip = false) {
   });
 
   if (zAnimacjaFlip && stareRects.size > 0) {
+    // Jeden wspólny rAF na całą listę (nie jeden na kartę) - i anulowanie
+    // poprzedniego przed zaplanowaniem nowego. Bez tego dwa bardzo szybkie
+    // kliknięcia sortowania pod rząd (drugie zanim rAF z pierwszego zdąży
+    // się wykonać) odczytałyby getBoundingClientRect() kart, które WCIĄŻ mają
+    // nałożone `translate` z nieukończonej pierwszej animacji - delta byłaby
+    // liczona od złej pozycji startowej, dając widoczne szarpnięcie.
+    if (flipRaf) cancelAnimationFrame(flipRaf);
+    const doZresetowania = [];
     kontener.querySelectorAll('.karta-projekt').forEach((el) => {
       const stary = stareRects.get(el.dataset.id);
       if (!stary) return;
@@ -685,10 +719,14 @@ function renderListaProjektow(zAnimacjaFlip = false) {
       if (Math.abs(delta) < 1) return;
       el.style.transition = 'none';
       el.style.translate = `0 ${delta}px`;
-      requestAnimationFrame(() => {
+      doZresetowania.push(el);
+    });
+    flipRaf = requestAnimationFrame(() => {
+      doZresetowania.forEach((el) => {
         el.style.transition = '';
         el.style.translate = '0 0';
       });
+      flipRaf = null;
     });
   }
 }
@@ -1779,8 +1817,12 @@ async function renderUstawienia() {
   document.getElementById('btn-dodaj-kategorie').addEventListener('click', async () => {
     const nazwa = document.getElementById('pole-nowa-kategoria').value.trim();
     if (!nazwa) return;
-    await dodajKategorie(nazwa);
-    renderUstawienia();
+    try {
+      await dodajKategorie(nazwa);
+      renderUstawienia();
+    } catch (err) {
+      alert(err.message);
+    }
   });
 
   app.querySelectorAll('[data-toggle-kategoria]').forEach((btn) => {
@@ -2167,8 +2209,20 @@ if ('serviceWorker' in navigator) {
 odswiezKolorPaskaStatusu();
 render();
 pokazOnboardingJesliPotrzebny();
-sprawdzPowiadomieniaProjektow();
-sprawdzPrzypomnienieKopii();
+// Baza pulsu dzwonka MUSI być ustawiona PRZED sprawdzPowiadomieniaProjektow/
+// sprawdzPrzypomnienieKopii (obie mogą same dopisać nowe powiadomienia) -
+// inaczej pierwsze porównanie widziałoby już powiększoną liczbę i albo
+// fałszywie pulsowałoby przy starych, nieprzeczytanych powiadomieniach z
+// poprzedniej sesji (poprzedniaLiczbaPowiadomien startowe 0 < cokolwiek),
+// albo nie zauważyłoby świeżo dodanych. Najpierw cichy odczyt ustawia bazę
+// i pokazuje aktualną odznakę bez pulsu, dopiero potem lecą sprawdzenia,
+// które mogą realnie coś nowego dopisać.
+pobierzLiczbeNieprzeczytanychPowiadomien().then(async (n) => {
+  poprzedniaLiczbaPowiadomien = n;
+  await odswiezOdznakePowiadomien();
+  sprawdzPowiadomieniaProjektow();
+  sprawdzPrzypomnienieKopii();
+});
 
 // Kurczący się nagłówek przy przewijaniu - `requestAnimationFrame` jako
 // throttle (bez tego `scroll` potrafi odpalić się kilkadziesiąt razy na
