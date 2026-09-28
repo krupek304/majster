@@ -15,6 +15,7 @@ import {
 import { kwotaPozycji, sumyKategorii, sumyPolem, sumaCalkowita, sumaPlatnosci, formatujKwote } from './calc.js';
 
 const app = document.getElementById('app');
+const topbar = document.querySelector('.topbar');
 const topbarTitle = document.getElementById('topbar-title');
 const dialog = document.getElementById('dialog');
 const tabButtons = document.querySelectorAll('.tab-btn');
@@ -222,6 +223,12 @@ function pobierzMotyw() {
   }
 }
 function zastosujMotyw(motyw) {
+  // Krótkie okno globalnej transition na kolorach (patrz CSS `.zmiana-motywu`)
+  // - żeby przełączenie jasny/ciemny/systemowy przenikało płynnie zamiast
+  // skakać skokowo. Zdjęte po 350ms, żeby nie spowalniać innych, normalnych
+  // zmian koloru w appce (np. odznaki statusu) przez resztę sesji.
+  document.documentElement.classList.add('zmiana-motywu');
+  setTimeout(() => document.documentElement.classList.remove('zmiana-motywu'), 350);
   if (motyw === 'jasny' || motyw === 'ciemny') {
     document.documentElement.setAttribute('data-motyw', motyw);
   } else {
@@ -376,7 +383,18 @@ tabButtons.forEach((btn) => {
   btn.addEventListener('click', () => ustawWidok(btn.dataset.widok));
 });
 
-function ustawWidok(widok, projektId = null) {
+// Nazwa View Transition dla "rozwinięcia" karty projektu w pełny ekran
+// kosztorysu - jedna stała nazwa wystarczy, bo w danej chwili nosi ją co
+// najwyżej jeden element (stary, znikający) i co najwyżej jeden nowy.
+const NAZWA_MORFOWANIA_KARTY = 'karta-projektu-aktywna';
+
+// `elementZrodlowy` (opcjonalnie) = kliknięta karta projektu - dostaje tę samą
+// view-transition-name co pole z danymi klienta w kosztorysie, więc przeglądarka
+// sama animuje przejście z kształtu/pozycji karty w pełny ekran, zamiast
+// zwykłego cross-fade. Bez wsparcia przeglądarki (i bez podanego elementu)
+// appka po prostu przełącza widok - efekt jest czysto kosmetyczny.
+function ustawWidok(widok, projektId = null, elementZrodlowy = null) {
+  if (elementZrodlowy) elementZrodlowy.style.viewTransitionName = NAZWA_MORFOWANIA_KARTY;
   const wykonaj = async () => {
     state.widok = widok;
     state.projektId = projektId;
@@ -385,11 +403,20 @@ function ustawWidok(widok, projektId = null) {
       else btn.removeAttribute('aria-current');
     });
     await render();
+    if (widok === 'kosztorys') {
+      const celMorfowania = app.querySelector('.uwaga');
+      if (celMorfowania) celMorfowania.style.viewTransitionName = NAZWA_MORFOWANIA_KARTY;
+    }
+  };
+  const posprzatajNazwy = () => {
+    if (elementZrodlowy) elementZrodlowy.style.viewTransitionName = '';
+    const celMorfowania = app.querySelector('.uwaga');
+    if (celMorfowania) celMorfowania.style.viewTransitionName = '';
   };
   // View Transitions API - natywne przejście (cross-fade) między ekranami.
   // Bez wsparcia przeglądarki (starsze niż Safari 18) po prostu renderuje od razu.
   if (document.startViewTransition) {
-    document.startViewTransition(wykonaj);
+    document.startViewTransition(wykonaj).finished.finally(posprzatajNazwy);
   } else {
     wykonaj();
   }
@@ -574,7 +601,8 @@ async function renderProjekty() {
   app.querySelectorAll('[data-sortuj-projekty]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.sortowanieProjektow = btn.dataset.sortujProjekty;
-      renderProjekty();
+      app.querySelectorAll('[data-sortuj-projekty]').forEach((b) => b.classList.toggle('aktywny', b === btn));
+      renderListaProjektow(true);
     });
   });
   document.getElementById('btn-nowy-projekt').addEventListener('click', dialogNowyProjekt);
@@ -600,7 +628,20 @@ function formatujDateYMD(dataYMD) {
   return new Date(dataYMD + 'T00:00:00').toLocaleDateString('pl-PL');
 }
 
-function renderListaProjektow() {
+// `zAnimacjaFlip=true` (tylko ze zmiany sortowania) - zestaw kart się nie
+// zmienia, tylko kolejność, więc zamiast fade-in-od-nowa (co wyglądałoby jak
+// "znikanie i pojawianie się") liczymy pozycje PRZED i PO (technika FLIP) i
+// animujemy przesunięcie. Domyślnie (pierwsze wejście, wynik szukania) karty
+// dostają zwykły wjazd z klasą `.nowa` (fade+translate, patrz CSS).
+function renderListaProjektow(zAnimacjaFlip = false) {
+  const kontenerPrzed = document.getElementById('lista-projektow');
+  const stareRects = new Map();
+  if (zAnimacjaFlip) {
+    kontenerPrzed.querySelectorAll('.karta-projekt').forEach((el) => {
+      stareRects.set(el.dataset.id, el.getBoundingClientRect());
+    });
+  }
+
   const fraza = state.filtrProjekty.trim().toLowerCase();
   const przefiltrowane = !fraza
     ? projektyPamiec
@@ -615,8 +656,8 @@ function renderListaProjektow() {
   const kontener = document.getElementById('lista-projektow');
   kontener.innerHTML = posortowane.length === 0
     ? `<div class="pusty-stan">${projektyPamiec.length === 0 ? 'Brak projektów.<br>Dodaj pierwszy kosztorys.' : 'Brak wyników dla tej frazy.'}</div>`
-    : posortowane.map((p) => `
-      <div class="karta karta-projekt" data-id="${p.id}">
+    : posortowane.map((p, i) => `
+      <div class="karta karta-projekt${zAnimacjaFlip ? '' : ' nowa'}" data-id="${p.id}"${zAnimacjaFlip ? '' : ` style="--wjazd-opoznienie:${Math.min(i, 8) * 30}ms"`}>
         <div>
           <div class="nazwa">${esc(p.nazwa)}</div>
           <div class="klient">${esc(p.klient) || 'Bez klienta'} &middot; ${formatujDateYMD(dataRozpoczeciaProjektu(p))}</div>
@@ -633,8 +674,23 @@ function renderListaProjektow() {
     `).join('');
 
   kontener.querySelectorAll('.karta-projekt').forEach((el) => {
-    el.addEventListener('click', () => ustawWidok('kosztorys', el.dataset.id));
+    el.addEventListener('click', () => ustawWidok('kosztorys', el.dataset.id, el));
   });
+
+  if (zAnimacjaFlip && stareRects.size > 0) {
+    kontener.querySelectorAll('.karta-projekt').forEach((el) => {
+      const stary = stareRects.get(el.dataset.id);
+      if (!stary) return;
+      const delta = stary.top - el.getBoundingClientRect().top;
+      if (Math.abs(delta) < 1) return;
+      el.style.transition = 'none';
+      el.style.translate = `0 ${delta}px`;
+      requestAnimationFrame(() => {
+        el.style.transition = '';
+        el.style.translate = '0 0';
+      });
+    });
+  }
 }
 
 function dialogNowyProjekt() {
@@ -1563,7 +1619,7 @@ function wirePodsumowanie() {
   });
 
   app.querySelectorAll('.karta-projekt-podsumowania').forEach((el) => {
-    el.addEventListener('click', () => ustawWidok('kosztorys', el.dataset.id));
+    el.addEventListener('click', () => ustawWidok('kosztorys', el.dataset.id, el));
   });
 }
 
@@ -2037,6 +2093,10 @@ async function sprawdzPrzypomnienieKopii() {
   await odswiezOdznakePowiadomien();
 }
 
+// Poprzednia liczba nieprzeczytanych - do wykrycia "przybyło nowe
+// powiadomienie" (a nie np. odświeżenia po oznaczeniu jako przeczytane, gdzie
+// liczba spada - puls ma sygnalizować coś NOWEGO, nie każdą zmianę).
+let poprzedniaLiczbaPowiadomien = 0;
 async function odswiezOdznakePowiadomien() {
   const liczba = await pobierzLiczbeNieprzeczytanychPowiadomien();
   if (liczba > 0) {
@@ -2045,6 +2105,12 @@ async function odswiezOdznakePowiadomien() {
   } else {
     odznakaPowiadomien.hidden = true;
   }
+  if (liczba > poprzedniaLiczbaPowiadomien) {
+    btnPowiadomienia.classList.remove('puls');
+    void btnPowiadomienia.offsetWidth; // wymusza reflow - pozwala odpalić animację ponownie, gdyby liczba rosła kilka razy pod rząd
+    btnPowiadomienia.classList.add('puls');
+  }
+  poprzedniaLiczbaPowiadomien = liczba;
 }
 
 async function pokazPowiadomienia() {
@@ -2103,3 +2169,15 @@ render();
 pokazOnboardingJesliPotrzebny();
 sprawdzPowiadomieniaProjektow();
 sprawdzPrzypomnienieKopii();
+
+// Kurczący się nagłówek przy przewijaniu - `requestAnimationFrame` jako
+// throttle (bez tego `scroll` potrafi odpalić się kilkadziesiąt razy na
+// sekundę i niepotrzebnie przełączać tę samą klasę w kółko).
+let scrollRaf = null;
+window.addEventListener('scroll', () => {
+  if (scrollRaf) return;
+  scrollRaf = requestAnimationFrame(() => {
+    topbar.classList.toggle('zwiniety', window.scrollY > 8);
+    scrollRaf = null;
+  });
+}, { passive: true });

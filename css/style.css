@@ -18,6 +18,22 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/* Krótkotrwała klasa na <html> na czas przełączania motywu (dodawana/zdejmowana
+   w zastosujMotyw()) - żeby zmiana jasny/ciemny/systemowy przenikała płynnie.
+   `!important` bo cel to NADPISAĆ istniejące, krótsze transition (np. tap-
+   feedback na przyciskach) tylko na te ~350ms, nie zostawić tego na stałe. */
+html.zmiana-motywu, html.zmiana-motywu * {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, fill 0.3s ease !important;
+}
+
+/* "Rozwinięcie" karty projektu w kosztorys (patrz NAZWA_MORFOWANIA_KARTY w
+   app.js) - przeglądarka sama liczy interpolację kształtu/pozycji, tu tylko
+   dobieramy czas i krzywą zamiast domyślnych ~0.25s ease. */
+::view-transition-group(karta-projektu-aktywna) {
+  animation-duration: 0.4s;
+  animation-timing-function: var(--sprezyste);
+}
+
 :root {
   --tlo: #f3f4f6;
   --karta: #ffffff;
@@ -37,6 +53,10 @@
   --sukces-ramka: #bbf7d0;
   --aktywne-tlo: #f9fafb;
   --font-naglowek: 'Oswald', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Krzywa z lekkim "przestrzeleniem" (overshoot) - używana TYLKO na transform
+     (translate/scale), nigdy na opacity/kolor: przestrzelona opacity dawałaby
+     wartości >1 albo <0, widoczne jako dziwne miganie. */
+  --sprezyste: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 /* Tryb ciemny - domyślnie podąża za ustawieniem systemowym telefonu, ale da się
@@ -128,7 +148,9 @@ body {
   position: sticky;
   top: 0;
   z-index: 10;
+  transition: padding 0.25s ease;
 }
+.topbar.zwiniety { padding: 8px 16px; }
 .topbar h1 {
   flex: 1;
   min-width: 0;
@@ -138,7 +160,9 @@ body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+  transition: font-size 0.25s ease;
 }
+.topbar.zwiniety h1 { font-size: 17px; }
 .btn-powiadomienia {
   position: relative;
   background: none;
@@ -153,7 +177,18 @@ body {
   transition: transform 0.1s ease;
 }
 .btn-powiadomienia:active { transform: scale(0.9); }
-.btn-powiadomienia svg { width: 22px; height: 22px; }
+.btn-powiadomienia svg { width: 22px; height: 22px; transform-origin: top center; }
+/* Puls dzwonka, gdy przybędzie NOWE powiadomienie (nie przy każdym odświeżeniu
+   odznaki - patrz warunek w odswiezOdznakePowiadomien()) - na samym <svg>, nie
+   na przycisku, żeby nie kolidować z jego własnym transform przy :active. */
+@keyframes puls-dzwonek {
+  0%, 100% { rotate: 0deg; }
+  20% { rotate: -15deg; }
+  40% { rotate: 12deg; }
+  60% { rotate: -8deg; }
+  80% { rotate: 4deg; }
+}
+.btn-powiadomienia.puls svg { animation: puls-dzwonek 0.5s ease; }
 .odznaka-powiadomien {
   position: absolute;
   top: -2px;
@@ -176,7 +211,10 @@ body {
 .topbar-baner { display: inline-flex; align-items: center; gap: 8px; }
 .topbar-baner-ikona { display: inline-flex; color: var(--akcent-jasny); }
 .topbar-baner-ikona .ikona-svg { width: 20px; height: 20px; }
-.topbar .baner-tytul.topbar-baner-tekst { font-size: 21px; letter-spacing: 0.02em; }
+.topbar .baner-tytul.topbar-baner-tekst { font-size: 21px; letter-spacing: 0.02em; transition: font-size 0.25s ease; }
+.topbar.zwiniety .baner-tytul.topbar-baner-tekst { font-size: 17px; }
+.topbar-baner-ikona .ikona-svg { transition: width 0.25s ease, height 0.25s ease; }
+.topbar.zwiniety .topbar-baner-ikona .ikona-svg { width: 16px; height: 16px; }
 .topbar-baner-omajster .baner-tytul span:nth-child(2) { color: var(--akcent-jasny); }
 .topbar .wstecz {
   background: none; border: none; color: white; font-size: 16px; cursor: pointer;
@@ -276,9 +314,22 @@ body {
   justify-content: space-between;
   align-items: center;
   cursor: pointer;
-  transition: transform 0.1s ease, background 0.15s ease;
+  opacity: 1;
+  translate: 0 0;
+  scale: 1;
+  transition: opacity 0.25s ease, translate 0.3s var(--sprezyste), scale 0.1s ease, background 0.15s ease;
+  transition-delay: var(--wjazd-opoznienie, 0s), var(--wjazd-opoznienie, 0s), 0s, 0s;
 }
-.karta-projekt:active { transform: scale(0.98); background: var(--aktywne-tlo); }
+.karta-projekt:active { scale: 0.98; background: var(--aktywne-tlo); }
+/* `.nowa` = "to jest naprawdę nowy/przefiltrowany widok listy" (pierwsze
+   wejście, wynik szukania) - dostaje fade+wjazd. Zmiana sortowania NIE
+   dostaje tej klasy (renderListaProjektow(true)) - tam karty tego samego
+   zestawu tylko PRZESUWAJĄ SIĘ na nowe miejsca (FLIP w JS), a ponowne
+   odtwarzanie fade-in przy każdej zmianie sortowania wyglądałoby jak
+   "znikanie i pojawianie się" zamiast płynnej zmiany kolejności. */
+@starting-style {
+  .karta-projekt.nowa { opacity: 0; translate: 0 8px; }
+}
 .karta-projekt .nazwa { font-weight: 600; font-size: 16px; }
 .karta-projekt .klient { color: var(--tekst-slaby); font-size: 13px; margin-top: 2px; }
 .karta-projekt .suma { font-weight: 600; color: var(--akcent); }
@@ -424,8 +475,14 @@ body {
   gap: 8px;
   cursor: pointer;
   opacity: 1;
-  transform: translateY(0);
-  transition: opacity 0.22s ease, transform 0.22s ease, background 0.1s ease;
+  translate: 0 0;
+  scale: 1;
+  /* `translate`/`scale` jako OSOBNE właściwości (nie jeden `transform`) -
+     wjazd (translate, wolny, sprężysty) i tap-feedback (scale, szybki, płaski)
+     mają różne timingi i nie mogą dzielić jednej transition-duration na
+     `transform` (błąd znaleziony 2026-09-27: dotknięcie miało wolne 220ms
+     zamiast szybkiego odzewu, bo obie animacje jechały po tej samej właściwości). */
+  transition: opacity 0.22s ease, translate 0.3s var(--sprezyste), scale 0.1s ease, background 0.1s ease;
 }
 /* `justify-content: space-between` z TRZEMA dziećmi (opis, kwota, kosz) nie
    trzyma kwoty w stałej kolumnie - jej pozycja "pływa" zależnie od tego, ile
@@ -436,9 +493,12 @@ body {
 .pozycja > div:first-child { flex: 1; min-width: 0; }
 .pozycja .kwota, .pozycja .btn-usun { flex-shrink: 0; }
 /* Delikatne "wjechanie" pozycji przy każdym renderze listy (dodanie, usunięcie,
-   edycja) - potwierdza wizualnie, że coś się zmieniło, bez zwalniania appki. */
+   edycja) - potwierdza wizualnie, że coś się zmieniło, bez zwalniania appki.
+   Opóźnienie per-wiersz (--wjazd-opoznienie, ustawiane inline z JS wg indeksu
+   w liście) - pozycje wjeżdżają jedna po drugiej, nie wszystkie naraz. */
+.pozycja { transition-delay: var(--wjazd-opoznienie, 0s), var(--wjazd-opoznienie, 0s), 0s, 0s; }
 @starting-style {
-  .pozycja { opacity: 0; transform: translateY(6px); }
+  .pozycja { opacity: 0; translate: 0 6px; }
 }
 .pozycja:last-child { border-bottom: none; }
 .pozycja:active { background: var(--aktywne-tlo); transform: scale(0.98); }

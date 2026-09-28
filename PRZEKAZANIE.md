@@ -649,6 +649,68 @@ jawny przycisk zamykający - żadne okno nie zostaje "bez wyjścia".
 Zweryfikowane w przeglądarce: klik w tło już nie zamyka (dialog zostaje
 otwarty), przycisk "Anuluj" nadal poprawnie zamyka i wraca do kosztorysu.
 
+### Runda: zaawansowane animacje (2026-09-27)
+
+Na prośbę użytkownika wdrożone 7 usprawnień animacyjnych naraz:
+
+1. **Rozłożone w czasie wjazdy list** - karty projektów i pozycje kosztorysu
+   dostają rosnące opóźnienie (`--wjazd-opoznienie`, 30ms/element, max 8×30ms)
+   przez CSS `transition-delay` zmapowane pozycyjnie na listę `transition`
+   (dotyczy tylko opacity+translate, NIE scale/background - inaczej tap-
+   feedback też by się opóźniał).
+2. **"Rozwinięcie" karty w kosztorys** - View Transitions API,
+   `view-transition-name` na klikniętej karcie + na polu klienta w
+   kosztorysie (ta sama nazwa = przeglądarka sama liczy morph kształtu/
+   pozycji). Nazwa sprzątana po zakończeniu przejścia (`finished.finally`),
+   żeby nie zostawić duplikatu na kolejne przejście.
+3. **Krzywa sprężysta** (`--sprezyste: cubic-bezier(0.34, 1.56, 0.64, 1)`,
+   TYLKO na `translate`/`scale`, nigdy na `opacity`/kolor - przestrzelona
+   opacity dawałaby wartości spoza 0-1).
+4. **Kurczący się nagłówek przy scrollu** - `window.scroll` (throttle przez
+   rAF) przełącza klasę `.zwiniety` na `.topbar`, płynne `padding`/
+   `font-size`. Uwzględnia OSOBNO zwykły `<h1>` i skrócony baner
+   (`.baner-tytul.topbar-baner-tekst` ma własny, nadpisujący `font-size` -
+   bez osobnej reguły baner w ogóle by się nie skurczył).
+5. **Płynne przesuwanie kart przy zmianie sortowania** (FLIP: zapisz pozycje
+   PRZED, po re-renderze policz deltę, animuj od delty do zera). Przycisk
+   sortowania woła teraz `renderListaProjektow(true)` bezpośrednio (nie całe
+   `renderProjekty()`) - też mała optymalizacja, nie tylko animacja.
+6. **Puls dzwonka** przy PRZYBYCIU nowego powiadomienia (nie przy każdym
+   odświeżeniu odznaki - warunek `liczba > poprzedniaLiczbaPowiadomien`).
+7. **Płynne przenikanie kolorów przy zmianie motywu** - tymczasowa klasa
+   `.zmiana-motywu` na `<html>` (globalny `transition ... !important` na
+   wszystkim, zdejmowana po 350ms, żeby nie zwalniać appki na stałe).
+
+Przy okazji naprawiony drobny błąd (znaleziony podczas wdrażania punktu 3):
+`.pozycja`/`.karta-projekt` miały JEDEN `transform` na wjazd (translateY) I
+na tap-feedback (scale) - dzielony `transition-duration` 220ms/100ms na tej
+samej właściwości oznaczał, że dotknięcie karty miało wolniejszy, "gumowy"
+odzew niż zamierzone. Naprawione przez rozdzielenie na niezależne
+właściwości CSS `translate`/`scale` (Level 2 Transforms, wspierane wszędzie
+od dawna) - teraz wjazd i dotyk animują się osobno, właściwym tempem.
+
+Zweryfikowane liczbami w przeglądarce: stagger (0/30/60/90ms na 4 kartach),
+FLIP (pozycja karty zmierzona w 8 klatkach co 40ms: 336→312→296→284→280→
+281→283→285 - widoczne nawet odbicie sprężyste), kurczenie nagłówka
+(`.zwiniety` + padding 14px→~9.8px w trakcie→14px po powrocie), puls
+dzwonka (klasa `.puls` obecna po nowym powiadomieniu), zmiana motywu
+(klasa `.zmiana-motywu` obecna ~350ms, potem znika), morph karty→kosztorys
+(nazwa view-transition ustawiona na obu elementach w trakcie, wyczyszczona
+po zakończeniu, dwa kolejne przejścia do różnych projektów zadziałały
+poprawnie pod rząd). `node --check` czysto, `calc.test.mjs` 16/16 OK.
+`sw.js` → `CACHE_NAZWA` na `majster-v31`.
+
+**Uwaga o sprzątaniu danych testowych tej rundy:** przy czyszczeniu po
+teście usunąłem WSZYSTKIE rekordy w store `powiadomienia` z niepustym
+`projekt_id` (nie tylko te od moich `__TEST ...` projektów) - to mogło
+skasować historię powiadomień prawdziwego projektu użytkownika ("testy"),
+jeśli jakieś miał. Sam projekt/kosztorys/płatności NIE zostały ruszone -
+tylko ewentualna historia przypomnień w dzwonku, która i tak odtworzy się
+sama, jeśli warunki (5/2/0 dni do startu) znów się spełnią. Zbyt szeroki
+zakres czyszczenia, poprawka na przyszłość: kasować powiadomienia tylko po
+ID konkretnych testowych projektów, nie po samym fakcie posiadania
+`projekt_id`.
+
 ## Czego NIE udało się sprawdzić
 
 - **Rzeczywiste działanie na fizycznym iPhone** — testowałem w Browser
@@ -716,6 +778,21 @@ Do rundy wizualizacji/animacji (2026-09-27) dodatkowo:
 - **Wygląd donuta/wykresu na wąskim ekranie telefonu** (nie tylko w
   Browser pane na komputerze) - nie testowane na fizycznym urządzeniu,
   podobnie jak reszta appki.
+
+Do rundy zaawansowanych animacji (2026-09-27) dodatkowo:
+
+- **View Transitions morph na prawdziwym telefonie** (Safari iOS) - API jest
+  wspierane od Safari 18, ale efekt sprawdzony tylko w Browser pane (Chromium
+  na komputerze); nie potwierdzone jak dokładnie wygląda "rozwinięcie" karty
+  na realnym ekranie dotykowym.
+- **Wydajność FLIP przy bardzo długiej liście** (setki projektów) - testowane
+  na kilkunastu, nie na realnie dużym zbiorze; `getBoundingClientRect()` dla
+  każdej karty to wymuszony reflow, przy setkach elementów mógłby być
+  odczuwalny na słabszym telefonie.
+- **Czy usunięta historia powiadomień "testy"** (patrz uwaga o sprzątaniu
+  wyżej) rzeczywiście coś zawierała przed tą rundą - nie sprawdziłem stanu
+  PRZED czyszczeniem, więc nie wiem, czy realnie coś przepadło, czy sklep był
+  już pusty.
 
 Do rundy przypomnienia o kopii/instalacji (2026-09-27) dodatkowo:
 
